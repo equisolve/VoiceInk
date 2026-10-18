@@ -33,9 +33,13 @@ class OllamaService: ObservableObject {
         URL(string: baseURL)
     }
 
+    private var isAllowedByCloudPolicy: Bool {
+        CloudPolicy.isEnhancementProviderAllowed(.ollama, ollamaBaseURL: baseURL)
+    }
+
     @MainActor
     func checkConnection() async {
-        guard let url = baseURLValue else {
+        guard isAllowedByCloudPolicy, let url = baseURLValue else {
             isConnected = false
             return
         }
@@ -51,6 +55,12 @@ class OllamaService: ObservableObject {
     func refreshConnectionAndModels() async -> Result<[OllamaModel], Error> {
         isLoadingModels = true
         defer { isLoadingModels = false }
+
+        guard isAllowedByCloudPolicy else {
+            isConnected = false
+            availableModels = []
+            return .failure(CloudPolicyError.cloudEndpointDisabled)
+        }
 
         guard let url = baseURLValue else {
             isConnected = false
@@ -78,6 +88,8 @@ class OllamaService: ObservableObject {
     func enhance(
         _ text: String, withSystemPrompt systemPrompt: String? = nil, model: String? = nil, timeout: TimeInterval = 30
     ) async throws -> String {
+        try CloudPolicy.requireEnhancementProviderAllowed(.ollama, ollamaBaseURL: baseURL)
+
         guard let systemPrompt = systemPrompt else {
             throw LocalAIError.invalidRequest
         }

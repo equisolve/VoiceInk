@@ -9,7 +9,7 @@ import Foundation
 enum CloudPolicy {
     static let disableCloudServicesKey = "DisableCloudServices"
 
-    /// Hosts a custom enhancement endpoint may use while cloud services are off.
+    /// Hosts an Ollama server or custom enhancement endpoint may use while cloud services are off.
     static let loopbackHosts: Set<String> = ["localhost", "127.0.0.1", "::1"]
 
     /// False when the organization has turned cloud services off.
@@ -62,18 +62,22 @@ enum CloudPolicy {
 
     // MARK: - AI enhancement
 
-    /// Ollama and the on-device model always pass. A custom endpoint passes only when its host is a loopback address.
+    /// The on-device model always passes. Ollama and a custom endpoint pass only when their host is a loopback address.
+    /// When `ollamaBaseURL` is nil, Ollama is checked against the saved server URL.
     /// The Local CLI provider is blocked because the command it runs can call cloud services.
     static func isEnhancementProviderAllowed(
         _ provider: AIProvider,
         customBaseURL: String? = nil,
+        ollamaBaseURL: String? = nil,
         cloudAllowed: Bool = isCloudAllowed
     ) -> Bool {
         if cloudAllowed { return true }
 
         switch provider {
-        case .ollama, .voiceInkRefine:
+        case .voiceInkRefine:
             return true
+        case .ollama:
+            return isLoopbackURL(ollamaBaseURL ?? AIProvider.ollama.baseURL)
         case .custom:
             return customBaseURL.map(isLoopbackURL) ?? false
         default:
@@ -81,13 +85,17 @@ enum CloudPolicy {
         }
     }
 
-    /// Throws before any text leaves the Mac when the provider or custom endpoint is blocked.
+    /// Throws before any text leaves the Mac when the provider, Ollama server, or custom endpoint is blocked.
     static func requireEnhancementProviderAllowed(
         _ provider: AIProvider,
         customBaseURL: String? = nil,
+        ollamaBaseURL: String? = nil,
         cloudAllowed: Bool = isCloudAllowed
     ) throws {
-        guard isEnhancementProviderAllowed(provider, customBaseURL: customBaseURL, cloudAllowed: cloudAllowed) else {
+        guard
+            isEnhancementProviderAllowed(
+                provider, customBaseURL: customBaseURL, ollamaBaseURL: ollamaBaseURL, cloudAllowed: cloudAllowed)
+        else {
             throw CloudPolicyError.cloudEnhancementDisabled(providerName: provider.rawValue)
         }
     }

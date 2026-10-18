@@ -41,23 +41,27 @@ final class RecordingURLProtocol: URLProtocol {
 
 final class CloudPolicyTests: XCTestCase {
     private let key = CloudPolicy.disableCloudServicesKey
+    private let ollamaBaseURLKey = "ollamaBaseURL"
     private var savedValue: Any?
+    private var savedOllamaBaseURL: Any?
 
     override func setUp() {
         super.setUp()
         savedValue = UserDefaults.standard.object(forKey: key)
+        savedOllamaBaseURL = UserDefaults.standard.object(forKey: ollamaBaseURLKey)
         RecordingURLProtocol.reset()
         URLProtocol.registerClass(RecordingURLProtocol.self)
     }
 
     override func tearDown() {
         URLProtocol.unregisterClass(RecordingURLProtocol.self)
-        if let savedValue {
-            UserDefaults.standard.set(savedValue, forKey: key)
-        } else {
-            UserDefaults.standard.removeObject(forKey: key)
-        }
+        UserDefaults.standard.set(savedValue, forKey: key)
+        UserDefaults.standard.set(savedOllamaBaseURL, forKey: ollamaBaseURLKey)
         super.tearDown()
+    }
+
+    private func setOllamaBaseURL(_ url: String?) {
+        UserDefaults.standard.set(url, forKey: ollamaBaseURLKey)
     }
 
     private func setCloudDisabled(_ disabled: Bool?) {
@@ -109,7 +113,8 @@ final class CloudPolicyTests: XCTestCase {
 
         for provider in AIProvider.allCases where provider != .custom {
             XCTAssertEqual(
-                CloudPolicy.isEnhancementProviderAllowed(provider, cloudAllowed: false),
+                CloudPolicy.isEnhancementProviderAllowed(
+                    provider, ollamaBaseURL: "http://localhost:11434", cloudAllowed: false),
                 allowed.contains(provider),
                 "Unexpected policy result for \(provider.rawValue)"
             )
@@ -160,7 +165,33 @@ final class CloudPolicyTests: XCTestCase {
         XCTAssertThrowsError(try CloudPolicy.requireEnhancementProviderAllowed(.openAI, cloudAllowed: false)) { error in
             XCTAssertEqual(error as? CloudPolicyError, .cloudEnhancementDisabled(providerName: AIProvider.openAI.rawValue))
         }
-        XCTAssertNoThrow(try CloudPolicy.requireEnhancementProviderAllowed(.ollama, cloudAllowed: false))
+        XCTAssertNoThrow(
+            try CloudPolicy.requireEnhancementProviderAllowed(
+                .ollama, ollamaBaseURL: "http://localhost:11434", cloudAllowed: false))
+    }
+
+    func testOllamaAllowedOnlyForLoopbackHosts() {
+        for url in ["http://localhost:11434", "http://127.0.0.1:11434", "http://[::1]:11434"] {
+            XCTAssertTrue(
+                CloudPolicy.isEnhancementProviderAllowed(.ollama, ollamaBaseURL: url, cloudAllowed: false),
+                "\(url) should be allowed"
+            )
+        }
+        for url in ["http://192.168.1.10:11434", "https://ollama.example.com", "http://localhost.example.com:11434", ""] {
+            XCTAssertFalse(
+                CloudPolicy.isEnhancementProviderAllowed(.ollama, ollamaBaseURL: url, cloudAllowed: false),
+                "\(url) should be blocked"
+            )
+            XCTAssertTrue(CloudPolicy.isEnhancementProviderAllowed(.ollama, ollamaBaseURL: url, cloudAllowed: true))
+        }
+    }
+
+    func testOllamaCheckedAgainstSavedServerURL() {
+        setOllamaBaseURL("http://192.168.1.10:11434")
+        XCTAssertFalse(CloudPolicy.isEnhancementProviderAllowed(.ollama, cloudAllowed: false))
+
+        setOllamaBaseURL(nil)
+        XCTAssertTrue(CloudPolicy.isEnhancementProviderAllowed(.ollama, cloudAllowed: false))
     }
 
     // MARK: - Transcription models
@@ -218,6 +249,64 @@ final class CloudPolicyTests: XCTestCase {
         }
 
         XCTAssertEqual(RecordingURLProtocol.requests, [])
+    }
+
+    @MainActor
+    func testRemoteOllamaRefusedBeforeNetworking() async {
+        setCloudDisabled(true)
+        setOllamaBaseURL("http://192.168.1.10:11434")
+
+        do {
+            _ = try await AIService().performChatCompletion(
+                provider: .ollama,
+                modelName: "llama3",
+                messages: [.user("hello")]
+            )
+            XCTFail("Chat request to a remote Ollama server should have been refused")
+        } catch {
+            XCTAssertEqual(error as? CloudPolicyError, .cloudEnhancementDisabled(providerName: "Ollama"), "\(error)")
+        }
+
+        let ollama = OllamaService()
+        do {
+            _ = try await ollama.enhance("hello", withSystemPrompt: "Clean up the text.", model: "llama3")
+            XCTFail("Generate request to a remote Ollama server should have been refused")
+        } catch {
+            XCTAssertEqual(error as? CloudPolicyError, .cloudEnhancementDisabled(providerName: "Ollama"), "\(error)")
+        }
+
+        let listing = await ollama.refreshConnectionAndModels()
+        if case .failure(let error) = listing {
+            XCTAssertEqual(error as? CloudPolicyError, .cloudEndpointDisabled)
+        } else {
+            XCTFail("Model listing on a remote Ollama server should have been refused")
+        }
+
+        await ollama.checkConnection()
+        XCTAssertFalse(ollama.isConnected)
+
+        let verification = await AIService().verifyAPIKey("", for: .ollama)
+        XCTAssertFalse(verification.isValid)
+
+        XCTAssertEqual(RecordingURLProtocol.requests, [])
+    }
+
+    @MainActor
+    func testLoopbackOllamaPassesPolicy() async {
+        setCloudDisabled(true)
+        // Nothing listens on loopback port 9, so the request fails fast after passing the policy check.
+        setOllamaBaseURL("http://127.0.0.1:9")
+
+        do {
+            _ = try await OllamaService().enhance(
+                "hello", withSystemPrompt: "Clean up the text.", model: "llama3", timeout: 5)
+            XCTFail("Nothing listens on port 9, so the request should fail")
+        } catch {
+            XCTAssertNil(error as? CloudPolicyError, "Loopback Ollama should pass the policy check: \(error)")
+        }
+
+        let verification = await AIService().verifyAPIKey("", for: .ollama)
+        XCTAssertTrue(verification.isValid)
     }
 
     @MainActor

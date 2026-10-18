@@ -127,6 +127,11 @@ struct LocalEnhancementServiceManagementView: View {
                     .padding(.leading, LocalProviderMetrics.labelWidth + 12)
             }
 
+            if !CloudPolicy.isCloudAllowed {
+                ManagedByOrganizationCaption(message: "The server must run on this Mac (localhost, 127.0.0.1, or ::1).")
+                    .padding(.leading, LocalProviderMetrics.labelWidth + 12)
+            }
+
             if !ollamaModelNames.isEmpty {
                 Divider()
                     .padding(.leading, LocalProviderMetrics.labelWidth + 12)

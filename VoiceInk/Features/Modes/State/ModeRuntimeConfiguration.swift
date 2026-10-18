@@ -222,8 +222,8 @@ enum ModeRuntimeResolver {
             }
             // Keep a provider blocked by cloud policy so the request path refuses it and tells the user,
             // rather than skipping enhancement without a word.
-            if !CloudPolicy.isCloudAllowed, provider.supportsEnhancement, provider != .ollama,
-                provider != .voiceInkRefine
+            if !CloudPolicy.isCloudAllowed, provider.supportsEnhancement,
+                provider == .custom || !CloudPolicy.isEnhancementProviderAllowed(provider)
             {
                 return provider
             }
