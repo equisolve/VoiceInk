@@ -39,6 +39,31 @@ class TranscriptionModelManager: ObservableObject {
             self?.refreshAllAvailableModels()
         }
 
+        cloudPolicyObserver = NotificationCenter.default.addObserver(
+            forName: .cloudPolicyDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.applyCloudPolicy() }
+        }
+    }
+
+    private var cloudPolicyObserver: NSObjectProtocol?
+
+    /// Moves off a blocked cloud model when cloud services are turned off, and back to the saved model when
+    /// they're turned on again. The saved choice in UserDefaults is never overwritten here.
+    func applyCloudPolicy() {
+        guard let savedSelection = UserDefaults.standard.string(forKey: "CurrentTranscriptionModel"),
+            let savedModel = TranscriptionModelRegistry.model(forSelectionKey: savedSelection, in: allAvailableModels),
+            isAvailableOnCurrentOS(savedModel)
+        else {
+            if let current = currentTranscriptionModel, !CloudPolicy.isTranscriptionAllowed(current) {
+                currentTranscriptionModel = cloudPolicyFallbackModel
+            }
+            return
+        }
+
+        currentTranscriptionModel = CloudPolicy.isTranscriptionAllowed(savedModel) ? savedModel : cloudPolicyFallbackModel
     }
 
     // MARK: - Computed: usable models
@@ -156,8 +181,11 @@ class TranscriptionModelManager: ObservableObject {
     // MARK: - Refresh all available models
 
     func refreshAllAvailableModels() {
-        let currentSelection = currentTranscriptionModel?.selectionKey
-            ?? UserDefaults.standard.string(forKey: "CurrentTranscriptionModel")
+        let savedSelection = UserDefaults.standard.string(forKey: "CurrentTranscriptionModel")
+        // While cloud services are off, the current model may be a local stand-in, so restore from the saved choice.
+        let currentSelection = CloudPolicy.isCloudAllowed
+            ? currentTranscriptionModel?.selectionKey ?? savedSelection
+            : savedSelection ?? currentTranscriptionModel?.selectionKey
         var models = TranscriptionModelRegistry.models
 
         for whisperModel in whisperModelManager?.availableModels ?? [] {

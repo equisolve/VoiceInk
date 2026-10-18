@@ -5,9 +5,22 @@ import XCTest
 @testable import VoiceInk
 
 /// Records every request that reaches the URL loading system so tests can assert none were made.
+///
+/// `URLProtocol.registerClass` reaches only `URLSession.shared`. LLMkit and the streaming clients create their own
+/// sessions, so `start()` also adds this class to every new ephemeral and default session configuration.
 final class RecordingURLProtocol: URLProtocol {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var recordedURLs: [URL] = []
+    nonisolated(unsafe) private static var isRecording = false
+    private static let installConfigurationHook: Void = {
+        for name in ["ephemeralSessionConfiguration", "defaultSessionConfiguration"] {
+            let original = class_getClassMethod(URLSessionConfiguration.self, NSSelectorFromString(name))!
+            let replacement = class_getClassMethod(
+                URLSessionConfiguration.self, NSSelectorFromString("recording_\(name)")
+            )!
+            method_exchangeImplementations(original, replacement)
+        }
+    }()
 
     static var requests: [URL] {
         lock.lock()
@@ -15,17 +28,28 @@ final class RecordingURLProtocol: URLProtocol {
         return recordedURLs
     }
 
-    static func reset() {
+    static func start() {
+        _ = installConfigurationHook
         lock.lock()
         recordedURLs = []
+        isRecording = true
+        lock.unlock()
+        URLProtocol.registerClass(RecordingURLProtocol.self)
+    }
+
+    static func stop() {
+        URLProtocol.unregisterClass(RecordingURLProtocol.self)
+        lock.lock()
+        isRecording = false
         lock.unlock()
     }
 
     override class func canInit(with request: URLRequest) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard isRecording else { return false }
         if let url = request.url {
-            lock.lock()
             recordedURLs.append(url)
-            lock.unlock()
         }
         return true
     }
@@ -39,6 +63,22 @@ final class RecordingURLProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+extension URLSessionConfiguration {
+    // After the exchange in RecordingURLProtocol, each call below runs the original Foundation method.
+    @objc class func recording_ephemeralSessionConfiguration() -> URLSessionConfiguration {
+        withRecordingProtocol(recording_ephemeralSessionConfiguration())
+    }
+
+    @objc class func recording_defaultSessionConfiguration() -> URLSessionConfiguration {
+        withRecordingProtocol(recording_defaultSessionConfiguration())
+    }
+
+    private static func withRecordingProtocol(_ configuration: URLSessionConfiguration) -> URLSessionConfiguration {
+        configuration.protocolClasses = [RecordingURLProtocol.self] + (configuration.protocolClasses ?? [])
+        return configuration
+    }
+}
+
 final class CloudPolicyTests: XCTestCase {
     private let key = CloudPolicy.disableCloudServicesKey
     private let ollamaBaseURLKey = "ollamaBaseURL"
@@ -49,12 +89,11 @@ final class CloudPolicyTests: XCTestCase {
         super.setUp()
         savedValue = UserDefaults.standard.object(forKey: key)
         savedOllamaBaseURL = UserDefaults.standard.object(forKey: ollamaBaseURLKey)
-        RecordingURLProtocol.reset()
-        URLProtocol.registerClass(RecordingURLProtocol.self)
+        RecordingURLProtocol.start()
     }
 
     override func tearDown() {
-        URLProtocol.unregisterClass(RecordingURLProtocol.self)
+        RecordingURLProtocol.stop()
         UserDefaults.standard.set(savedValue, forKey: key)
         UserDefaults.standard.set(savedOllamaBaseURL, forKey: ollamaBaseURLKey)
         super.tearDown()
@@ -304,9 +343,59 @@ final class CloudPolicyTests: XCTestCase {
         } catch {
             XCTAssertNil(error as? CloudPolicyError, "Loopback Ollama should pass the policy check: \(error)")
         }
+        // LLMkit sends this through its own ephemeral session, so this also proves the recorder sees that traffic.
+        XCTAssertTrue(RecordingURLProtocol.requests.contains { $0.host == "127.0.0.1" }, "\(RecordingURLProtocol.requests)")
 
         let verification = await AIService().verifyAPIKey("", for: .ollama)
         XCTAssertTrue(verification.isValid)
+    }
+
+    /// Adds a custom provider for one test and removes it, with its Keychain entry, afterward.
+    @MainActor
+    private func withCustomProvider(baseURL: String, _ body: (String) async throws -> Void) async rethrows {
+        let manager = CustomAIProviderManager.shared
+        let model = "policy-test-\(UUID().uuidString)"
+        let provider = CustomAIProviderConfig(name: model, baseURL: baseURL, models: [model], selectedModel: model)
+        XCTAssertTrue(manager.addProvider(provider, apiKey: "test-key"), "Couldn't save the test provider")
+        defer {
+            if let saved = manager.provider(forModel: model) {
+                manager.deleteProvider(saved)
+            }
+        }
+        try await body(model)
+    }
+
+    @MainActor
+    func testRemoteCustomEndpointRefusedBeforeNetworking() async {
+        setCloudDisabled(true)
+
+        await withCustomProvider(baseURL: "https://llm.example.com/v1") { model in
+            do {
+                _ = try await AIService().performChatCompletion(provider: .custom, modelName: model, messages: [.user("hello")])
+                XCTFail("Request to a remote custom endpoint should have been refused")
+            } catch {
+                XCTAssertEqual(error as? CloudPolicyError, .cloudEnhancementDisabled(providerName: "Custom"), "\(error)")
+            }
+        }
+
+        XCTAssertEqual(RecordingURLProtocol.requests, [])
+    }
+
+    @MainActor
+    func testLoopbackCustomEndpointPassesPolicy() async {
+        setCloudDisabled(true)
+
+        await withCustomProvider(baseURL: "http://127.0.0.1:9/v1") { model in
+            do {
+                _ = try await AIService().performChatCompletion(
+                    provider: .custom, modelName: model, messages: [.user("hello")], timeout: 5)
+                XCTFail("Nothing listens on port 9, so the request should fail")
+            } catch {
+                XCTAssertNil(error as? CloudPolicyError, "Loopback custom endpoint should pass the policy check: \(error)")
+            }
+        }
+
+        XCTAssertTrue(RecordingURLProtocol.requests.contains { $0.host == "127.0.0.1" }, "\(RecordingURLProtocol.requests)")
     }
 
     @MainActor

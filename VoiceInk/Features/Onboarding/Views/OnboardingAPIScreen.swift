@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct OnboardingAPIScreen: View {
+    @ObservedObject private var cloudPolicyMonitor = CloudPolicyMonitor.shared
     @ObservedObject var aiService: AIService
 
     let contentMaxWidth: CGFloat

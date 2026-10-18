@@ -13,6 +13,7 @@ struct ModeConfigFormView: View {
 
     @EnvironmentObject private var aiService: AIService
     @EnvironmentObject private var modeWarmupStore: ModeFormWarmupStore
+    @ObservedObject private var cloudPolicyMonitor = CloudPolicyMonitor.shared
     @FocusState private var isNameFieldFocused: Bool
 
     @State private var isShowingIconPicker = false

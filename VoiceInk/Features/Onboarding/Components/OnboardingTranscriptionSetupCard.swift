@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct OnboardingTranscriptionSetupCard: View {
+    @ObservedObject private var cloudPolicyMonitor = CloudPolicyMonitor.shared
     let localModel: FluidAudioModel?
     let setupKind: OnboardingTranscriptionSetupKind
     let providerOptions: [any CloudProvider]

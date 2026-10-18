@@ -250,6 +250,7 @@ class AIService: ObservableObject {
     private lazy var localCLIService = LocalCLIService()
     private var apiKeyChangeObserver: NSObjectProtocol?
     private var settingsChangeObserver: NSObjectProtocol?
+    private var cloudPolicyObserver: NSObjectProtocol?
     private var voiceInkRefineObserver: AnyCancellable?
 
     @Published private var openRouterModels: [String] = []
@@ -420,6 +421,15 @@ class AIService: ObservableObject {
         ) { [weak self] _ in
             self?.initializeAutoLearnSelectionIfNeeded()
         }
+
+        // Connected providers depend on cloud policy, so republish them when it changes.
+        cloudPolicyObserver = NotificationCenter.default.addObserver(
+            forName: .cloudPolicyDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     deinit {
@@ -428,6 +438,9 @@ class AIService: ObservableObject {
         }
         if let settingsChangeObserver {
             NotificationCenter.default.removeObserver(settingsChangeObserver)
+        }
+        if let cloudPolicyObserver {
+            NotificationCenter.default.removeObserver(cloudPolicyObserver)
         }
         voiceInkRefineObserver?.cancel()
     }

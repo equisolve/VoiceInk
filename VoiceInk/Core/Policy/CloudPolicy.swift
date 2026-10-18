@@ -108,6 +108,49 @@ enum CloudPolicy {
     }
 }
 
+extension Notification.Name {
+    /// Posted on the main thread when `DisableCloudServices` changes, including when a configuration profile is
+    /// installed or removed while the app runs.
+    static let cloudPolicyDidChange = Notification.Name("cloudPolicyDidChange")
+}
+
+/// Watches `DisableCloudServices` so model selection and open screens follow a policy change without a relaunch.
+@MainActor
+final class CloudPolicyMonitor: NSObject, ObservableObject {
+    static let shared = CloudPolicyMonitor()
+
+    @Published private(set) var isCloudAllowed = CloudPolicy.isCloudAllowed
+    private var isObserving = false
+
+    func start() {
+        guard !isObserving else { return }
+        isObserving = true
+        isCloudAllowed = CloudPolicy.isCloudAllowed
+        UserDefaults.standard.addObserver(self, forKeyPath: CloudPolicy.disableCloudServicesKey, options: [.new], context: nil)
+    }
+
+    nonisolated override func observeValue(
+        forKeyPath keyPath: String?,
+        of object: Any?,
+        change: [NSKeyValueChangeKey: Any]?,
+        context: UnsafeMutableRawPointer?
+    ) {
+        guard keyPath == CloudPolicy.disableCloudServicesKey else { return }
+        DispatchQueue.main.async {
+            MainActor.assumeIsolated { self.refresh() }
+        }
+    }
+
+    /// Re-reads the key and notifies observers when the effective value changed.
+    func refresh() {
+        let allowed = CloudPolicy.isCloudAllowed
+        guard allowed != isCloudAllowed else { return }
+        isCloudAllowed = allowed
+        NotificationCenter.default.post(name: .cloudPolicyDidChange, object: nil)
+        NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
+    }
+}
+
 enum CloudPolicyError: Error, LocalizedError, Equatable {
     case cloudTranscriptionDisabled
     case cloudEnhancementDisabled(providerName: String)

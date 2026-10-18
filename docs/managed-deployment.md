@@ -8,7 +8,7 @@ Set the Boolean key `DisableCloudServices` to `true` in the `com.prakashjoshipax
 
 When the value comes from a configuration profile, users can't change it, and the app labels each hidden or turned-off option with **Managed by your organization**. When the value is set locally with `defaults write`, the app shows **Cloud services are turned off** instead.
 
-VoiceInk reads the key each time it needs it, so a new profile takes effect without restarting the app. Some screens refresh the next time they open.
+VoiceInk applies a change to the key while it runs, so you don't need to restart the app. When cloud services turn off, VoiceInk moves off a cloud transcription model and open screens update. When they turn back on, VoiceInk returns to the model the user chose before. A streaming transcription that started before the change can finish.
 
 ### What the key blocks
 
@@ -21,6 +21,8 @@ When `DisableCloudServices` is `true`:
 - **API key entry.** The **Cloud** tab in **AI Models** shows a notice instead of the provider list, and onboarding skips the cloud provider steps. Keys already saved in the Keychain are ignored, not deleted, so they work again if the key is removed.
 - **Auto-Learn Dictionary.** Auto-Learn requests go through the same check, so they can use only the allowed AI providers.
 - **Model catalog refreshes.** VoiceInk doesn't download the OpenRouter model lists.
+
+VoiceInk fully trusts an Ollama or custom endpoint on `localhost`, `127.0.0.1`, or `::1`, including any redirect or forwarding that server does. For example, a local proxy such as LiteLLM can accept a request on `localhost` and send it to a cloud service, and VoiceInk follows a redirect from a local server to another host. Allow only local servers that you control.
 
 ### What the key doesn't block
 
@@ -132,7 +134,7 @@ Rebuilding or re-signing the app changes the code requirement, so update the PPP
 
 ## Test the key without a profile
 
-To try the behavior on one Mac without MDM, set the key locally, then relaunch VoiceInk:
+To try the behavior on one Mac without MDM, set the key locally:
 
 ```sh
 defaults write com.prakashjoshipax.VoiceInk DisableCloudServices -bool true

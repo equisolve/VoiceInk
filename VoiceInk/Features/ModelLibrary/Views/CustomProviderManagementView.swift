@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct CustomProviderManagementView: View {
+    @ObservedObject private var cloudPolicyMonitor = CloudPolicyMonitor.shared
     @ObservedObject var customModelManager: CustomCloudModelManager
     @ObservedObject var customAIProviderManager: CustomAIProviderManager
 

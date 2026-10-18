@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct LocalEnhancementServiceManagementView: View {
+    @ObservedObject private var cloudPolicyMonitor = CloudPolicyMonitor.shared
     @EnvironmentObject private var aiService: AIService
 
     @State private var isOllamaExpanded = false
