@@ -14,6 +14,10 @@ struct CustomModelConnectionTester {
     static func testTranscriptionEndpoint(endpoint: String, apiKey: String, modelName: String) async
         -> ConnectionTestResult
     {
+        guard CloudPolicy.isTranscriptionAllowed(.custom) else {
+            return .failure(message: CloudPolicyError.cloudTranscriptionDisabled.localizedDescription)
+        }
+
         guard let url = URL(string: endpoint), isAllowedScheme(url) else {
             return .failure(
                 message: String(localized: "Endpoint must use HTTPS (plain HTTP is allowed only for localhost)"))
@@ -70,6 +74,10 @@ struct CustomModelConnectionTester {
     static func testEnhancementEndpoint(baseURL: String, apiKey: String, modelName: String) async
         -> ConnectionTestResult
     {
+        guard CloudPolicy.isEnhancementProviderAllowed(.custom, customBaseURL: baseURL) else {
+            return .failure(message: CloudPolicyError.cloudEndpointDisabled.localizedDescription)
+        }
+
         guard let url = URL(string: baseURL), isAllowedScheme(url) else {
             return .failure(
                 message: String(localized: "Base URL must use HTTPS (plain HTTP is allowed only for localhost)"))

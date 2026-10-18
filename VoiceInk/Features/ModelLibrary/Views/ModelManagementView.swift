@@ -173,12 +173,19 @@ struct ModelManagementView: View {
             case .local:
                 localModelsSection
             case .cloud:
-                CloudProviderManagementView(
-                    selectedProviderID: selectedCloudProviderID,
-                    onSelectProvider: openCloudProviderPanel
-                )
-                .environmentObject(aiService)
-                .environmentObject(transcriptionModelManager)
+                if CloudPolicy.isCloudAllowed {
+                    CloudProviderManagementView(
+                        selectedProviderID: selectedCloudProviderID,
+                        onSelectProvider: openCloudProviderPanel
+                    )
+                    .environmentObject(aiService)
+                    .environmentObject(transcriptionModelManager)
+                } else {
+                    ManagedByOrganizationNotice(
+                        message:
+                            "Cloud transcription and AI providers are off, and API keys can't be added. Use a model on the Local tab."
+                    )
+                }
             case .custom:
                 CustomProviderManagementView(
                     customModelManager: customModelManager,
@@ -325,29 +332,35 @@ struct ModelManagementView: View {
 
             Spacer()
 
-            Button(action: {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
-                    selectedFilter = .cloud
-                }
-            }) {
-                HStack(spacing: 4) {
-                    Text("Use Cloud")
-                        .font(.system(size: 12, weight: .semibold))
-                    Image(systemName: "arrow.right")
-                        .font(.system(size: 10, weight: .bold))
-                }
-                .foregroundColor(AppTheme.Status.warningStrong)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 6)
-                .background(AppTheme.Status.warningStrong.opacity(0.12))
-                .cornerRadius(6)
+            if CloudPolicy.isCloudAllowed {
+                useCloudButton
             }
-            .buttonStyle(.plain)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 10)
         .background(AppTheme.Status.warningStrong.opacity(0.08))
         .cornerRadius(8)
+    }
+
+    private var useCloudButton: some View {
+        Button(action: {
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.8)) {
+                selectedFilter = .cloud
+            }
+        }) {
+            HStack(spacing: 4) {
+                Text("Use Cloud")
+                    .font(.system(size: 12, weight: .semibold))
+                Image(systemName: "arrow.right")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .foregroundColor(AppTheme.Status.warningStrong)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(AppTheme.Status.warningStrong.opacity(0.12))
+            .cornerRadius(6)
+        }
+        .buttonStyle(.plain)
     }
 
     private var localModels: [any TranscriptionModel] {

@@ -20,63 +20,25 @@ struct OnboardingAPIScreen: View {
             stage: .api,
             contentMaxWidth: contentMaxWidth
         ) {
-            AIProviderVerificationCard(
-                aiService: aiService,
-                providerOptions: providerOptions,
-                selectedProvider: $selectedProvider,
-                onVerificationChanged: onVerificationChanged
-            )
-        } bottomBar: {
-            HStack(spacing: 0) {
-                Button(action: onBack) {
-                    Text("Back")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(AppTheme.Action.secondaryForeground)
-                        .frame(width: 132, height: 42)
-                        .background(AppMaterialCardBackground(cornerRadius: AppTheme.Radius.control))
-                }
-                .buttonStyle(.plain)
-
-                Spacer(minLength: 0)
-
-                if !isSelectedProviderVerified {
-                    Button(action: onRequestSkip) {
-                        Text("Set It Up Later")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundColor(AppTheme.Text.secondary)
-                            .padding(.horizontal, 4)
-                            .frame(minHeight: 42)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.75)
-                            .allowsTightening(true)
-                            .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                }
-
-                Spacer(minLength: 0)
-
-                Button(action: onContinue) {
-                    Text("Continue")
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(
-                            canContinue && isSelectedProviderVerified
-                                ? AppTheme.Action.primaryForeground : AppTheme.Action.disabledForeground
-                        )
-                        .padding(.horizontal, 20)
-                        .frame(minWidth: 132, minHeight: 42)
-                        .background(
-                            RoundedRectangle(cornerRadius: AppTheme.Radius.control, style: .continuous)
-                                .fill(
-                                    canContinue && isSelectedProviderVerified
-                                        ? AppTheme.Action.primaryFill : AppTheme.Action.disabledFill
-                                )
-                        )
-                }
-                .buttonStyle(.plain)
-                .disabled(!(canContinue && isSelectedProviderVerified))
+            if CloudPolicy.isCloudAllowed {
+                AIProviderVerificationCard(
+                    aiService: aiService,
+                    providerOptions: providerOptions,
+                    selectedProvider: $selectedProvider,
+                    onVerificationChanged: onVerificationChanged
+                )
+            } else {
+                ManagedByOrganizationNotice(
+                    message:
+                        "Cloud AI providers are off. You can set up Ollama or VoiceInk Refine later in AI Models."
+                )
             }
-            .frame(maxWidth: OnboardingLayout.chromeMaxWidth)
+        } bottomBar: {
+            if CloudPolicy.isCloudAllowed {
+                cloudBottomBar
+            } else {
+                managedBottomBar
+            }
         }
         .alert("Set up AI enhancement later?", isPresented: $isShowingSkipWarning) {
             Button("Go Back", role: .cancel) {}
@@ -86,5 +48,88 @@ struct OnboardingAPIScreen: View {
         } message: {
             Text("Enhancement modes and AI actions will stay off until you add a key. You can set this up anytime from Settings.")
         }
+    }
+
+    /// With cloud providers off there's no key to enter, so Continue skips this step.
+    private var managedBottomBar: some View {
+        HStack(spacing: 0) {
+            Button(action: onBack) {
+                Text("Back")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(AppTheme.Action.secondaryForeground)
+                    .frame(width: 132, height: 42)
+                    .background(AppMaterialCardBackground(cornerRadius: AppTheme.Radius.control))
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 0)
+
+            Button(action: onConfirmSkip) {
+                Text("Continue")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(AppTheme.Action.primaryForeground)
+                    .padding(.horizontal, 20)
+                    .frame(minWidth: 132, minHeight: 42)
+                    .background(
+                        RoundedRectangle(cornerRadius: AppTheme.Radius.control, style: .continuous)
+                            .fill(AppTheme.Action.primaryFill)
+                    )
+            }
+            .buttonStyle(.plain)
+        }
+        .frame(maxWidth: OnboardingLayout.chromeMaxWidth)
+    }
+
+    private var cloudBottomBar: some View {
+        HStack(spacing: 0) {
+            Button(action: onBack) {
+                Text("Back")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(AppTheme.Action.secondaryForeground)
+                    .frame(width: 132, height: 42)
+                    .background(AppMaterialCardBackground(cornerRadius: AppTheme.Radius.control))
+            }
+            .buttonStyle(.plain)
+
+            Spacer(minLength: 0)
+
+            if !isSelectedProviderVerified {
+                Button(action: onRequestSkip) {
+                    Text("Set It Up Later")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundColor(AppTheme.Text.secondary)
+                        .padding(.horizontal, 4)
+                        .frame(minHeight: 42)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.75)
+                        .allowsTightening(true)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+            }
+
+            Spacer(minLength: 0)
+
+            Button(action: onContinue) {
+                Text("Continue")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(
+                        canContinue && isSelectedProviderVerified
+                            ? AppTheme.Action.primaryForeground : AppTheme.Action.disabledForeground
+                    )
+                    .padding(.horizontal, 20)
+                    .frame(minWidth: 132, minHeight: 42)
+                    .background(
+                        RoundedRectangle(cornerRadius: AppTheme.Radius.control, style: .continuous)
+                            .fill(
+                                canContinue && isSelectedProviderVerified
+                                    ? AppTheme.Action.primaryFill : AppTheme.Action.disabledFill
+                            )
+                    )
+            }
+            .buttonStyle(.plain)
+            .disabled(!(canContinue && isSelectedProviderVerified))
+        }
+        .frame(maxWidth: OnboardingLayout.chromeMaxWidth)
     }
 }

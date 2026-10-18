@@ -21,6 +21,14 @@ protocol CloudProvider: Sendable {
 extension CloudProvider {
     var isStreamingOnly: Bool { false }
 
+    /// Verifies the key only when cloud policy allows this provider, so no request reaches it otherwise.
+    func verifyAPIKeyIfCloudAllowed(_ key: String) async -> (isValid: Bool, errorMessage: String?) {
+        guard CloudPolicy.isTranscriptionAllowed(modelProvider) else {
+            return (false, CloudPolicyError.cloudTranscriptionDisabled.localizedDescription)
+        }
+        return await verifyAPIKey(key)
+    }
+
     /// Streaming-only providers inherit this and get a clear error if batch is somehow attempted.
     /// Providers that support batch transcription override this with their real implementation.
     func transcribe(

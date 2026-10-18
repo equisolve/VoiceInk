@@ -260,7 +260,8 @@ final class OnboardingCoordinator: ObservableObject {
     }
 
     var transcriptionSetupKind: OnboardingTranscriptionSetupKind {
-        OnboardingTranscriptionSetupKind(rawValue: storedTranscriptionSetupKind) ?? .local
+        guard CloudPolicy.isCloudAllowed else { return .local }
+        return OnboardingTranscriptionSetupKind(rawValue: storedTranscriptionSetupKind) ?? .local
     }
 
     var onboardingTranscriptionProviderOptions: [any CloudProvider] {

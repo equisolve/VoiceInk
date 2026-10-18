@@ -13,9 +13,21 @@ struct CustomProviderManagementView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            customTranscriptionSection
+            if CloudPolicy.isCloudAllowed {
+                customTranscriptionSection
+            } else {
+                ManagedByOrganizationNotice(
+                    message:
+                        "Custom transcription endpoints are off. Custom enhancement models work only when they run on this Mac (localhost, 127.0.0.1, or ::1)."
+                )
+            }
             customEnhancementSection
         }
+    }
+
+    /// While cloud services are off, endpoints that aren't on this Mac are hidden.
+    private var visibleEnhancementProviders: [CustomAIProviderConfig] {
+        customAIProviderManager.providers.filter(customAIProviderManager.isAllowedByCloudPolicy)
     }
 
     private var customTranscriptionSection: some View {
@@ -55,13 +67,13 @@ struct CustomProviderManagementView: View {
                 onAdd: onAddEnhancementModel
             )
 
-            if customAIProviderManager.providers.isEmpty {
+            if visibleEnhancementProviders.isEmpty {
                 CustomProviderEmptyState(
                     systemImage: "sparkles",
                     title: "No Custom Enhancement Models"
                 )
             } else {
-                ForEach(customAIProviderManager.providers) { provider in
+                ForEach(visibleEnhancementProviders) { provider in
                     CustomEnhancementModelRow(
                         provider: provider,
                         onEdit: {

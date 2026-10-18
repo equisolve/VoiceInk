@@ -50,6 +50,9 @@ class CloudTranscriptionService: TranscriptionService {
     func transcribe(audioURL: URL, model: any TranscriptionModel, context: TranscriptionRequestContext) async throws
         -> String
     {
+        // Refuse blocked providers before the audio file is even read.
+        try CloudPolicy.requireTranscriptionAllowed(model.provider)
+
         let audioData = try loadAudioData(from: audioURL)
         let fileName = audioURL.lastPathComponent
         let language = selectedLanguage(from: context)

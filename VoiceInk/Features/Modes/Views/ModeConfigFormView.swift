@@ -232,6 +232,10 @@ struct ModeConfigFormView: View {
                 realtimeToggle
             }
 
+            if !CloudPolicy.isCloudAllowed {
+                ManagedByOrganizationCaption(message: "Cloud transcription models are hidden.")
+            }
+
             languagePicker
 
             ExpandableSettingsRow(
@@ -407,6 +411,12 @@ struct ModeConfigFormView: View {
                             }
                         }
                     }
+                }
+
+                if !CloudPolicy.isCloudAllowed {
+                    ManagedByOrganizationCaption(
+                        message: "Only Ollama, VoiceInk Refine, and custom models on this Mac are available."
+                    )
                 }
 
                 if let provider = configuredSelectedAIProvider {

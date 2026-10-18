@@ -36,20 +36,27 @@ struct LocalEnhancementServiceManagementView: View {
                     ollamaConfiguration
                 }
 
-                Divider()
-                    .padding(.leading, 58)
+                // The CLI provider runs an arbitrary command that can call cloud services, so cloud policy hides it.
+                if CloudPolicy.isEnhancementProviderAllowed(.localCLI) {
+                    Divider()
+                        .padding(.leading, 58)
 
-                LocalProviderDisclosureRow(
-                    title: Text("CLI Provider"),
-                    subtitle: Text("Claude, Codex, scripts, or any command"),
-                    systemImage: "terminal",
-                    statusTitle: isLocalCLIConfigured ? Text("Configured") : Text("Not configured"),
-                    isExpanded: $isLocalCLIExpanded
-                ) {
-                    localCLIConfiguration
+                    LocalProviderDisclosureRow(
+                        title: Text("CLI Provider"),
+                        subtitle: Text("Claude, Codex, scripts, or any command"),
+                        systemImage: "terminal",
+                        statusTitle: isLocalCLIConfigured ? Text("Configured") : Text("Not configured"),
+                        isExpanded: $isLocalCLIExpanded
+                    ) {
+                        localCLIConfiguration
+                    }
                 }
             }
             .background(AppMaterialCardBackground(cornerRadius: 11))
+
+            if !CloudPolicy.isCloudAllowed {
+                ManagedByOrganizationCaption(message: "The CLI provider is off because the command it runs can reach cloud services.")
+            }
         }
         .onAppear {
             selectedOllamaModel = aiService.selectedModel(for: .ollama)

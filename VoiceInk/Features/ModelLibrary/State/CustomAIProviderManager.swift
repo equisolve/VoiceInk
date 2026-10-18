@@ -61,10 +61,16 @@ final class CustomAIProviderManager: ObservableObject {
             let modelName = provider.modelName
             guard !modelName.isEmpty,
                 hasAPIKey(for: provider),
+                isAllowedByCloudPolicy(provider),
                 !result.contains(modelName)
             else { return }
             result.append(modelName)
         }
+    }
+
+    /// While cloud services are off, only endpoints on this Mac count as configured.
+    func isAllowedByCloudPolicy(_ provider: CustomAIProviderConfig) -> Bool {
+        CloudPolicy.isEnhancementProviderAllowed(.custom, customBaseURL: provider.baseURL)
     }
 
     var defaultModelName: String {
@@ -80,7 +86,7 @@ final class CustomAIProviderManager: ObservableObject {
 
     var hasConfiguredModels: Bool {
         providers.contains { provider in
-            !provider.modelName.isEmpty && hasAPIKey(for: provider)
+            !provider.modelName.isEmpty && hasAPIKey(for: provider) && isAllowedByCloudPolicy(provider)
         }
     }
 
@@ -180,6 +186,8 @@ final class CustomAIProviderManager: ObservableObject {
             errors.append(String(localized: "Base URL cannot be empty"))
         } else if URL(string: trimmedURL)?.host == nil {
             errors.append(String(localized: "Base URL must be a valid URL"))
+        } else if !CloudPolicy.isEnhancementProviderAllowed(.custom, customBaseURL: trimmedURL) {
+            errors.append(CloudPolicyError.cloudEndpointDisabled.localizedDescription)
         }
 
         if trimmedModel.isEmpty {

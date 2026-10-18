@@ -44,7 +44,11 @@ struct OnboardingTranscriptionSetupCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            setupSwitcher
+            if CloudPolicy.isCloudAllowed {
+                setupSwitcher
+            } else {
+                ManagedByOrganizationCaption(message: "Cloud transcription is off. Download a local model to continue.")
+            }
 
             switch setupKind {
             case .local:
@@ -392,7 +396,7 @@ struct OnboardingTranscriptionSetupCard: View {
         let providerKey = selectedProvider.providerKey
 
         Task {
-            let result = await selectedProvider.verifyAPIKey(key)
+            let result = await selectedProvider.verifyAPIKeyIfCloudAllowed(key)
 
             await MainActor.run {
                 isVerifying = false

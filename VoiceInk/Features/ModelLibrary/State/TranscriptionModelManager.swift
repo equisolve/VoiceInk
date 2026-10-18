@@ -45,6 +45,8 @@ class TranscriptionModelManager: ObservableObject {
 
     var usableModels: [any TranscriptionModel] {
         allAvailableModels.filter { model in
+            guard CloudPolicy.isTranscriptionAllowed(model) else { return false }
+
             switch model.provider {
             case .whisper:
                 return whisperModelManager?.availableModels.contains { $0.name == model.name } ?? false
@@ -63,6 +65,18 @@ class TranscriptionModelManager: ObservableObject {
                 return false
             }
         }
+    }
+
+    /// The local model to use in place of a blocked cloud model: the default model if it is allowed and ready,
+    /// otherwise the first downloaded local model, otherwise nil.
+    var cloudPolicyFallbackModel: (any TranscriptionModel)? {
+        let usable = usableModels
+        if let current = currentTranscriptionModel,
+            usable.contains(where: { $0.selectionKey == current.selectionKey })
+        {
+            return current
+        }
+        return usable.first
     }
 
     func isAvailableOnCurrentOS(_ model: any TranscriptionModel) -> Bool {
@@ -86,6 +100,12 @@ class TranscriptionModelManager: ObservableObject {
                 return
             }
 
+            guard CloudPolicy.isTranscriptionAllowed(savedModel) else {
+                // Keep the saved cloud choice so it returns if the policy is lifted; use a local model meanwhile.
+                currentTranscriptionModel = cloudPolicyFallbackModel
+                return
+            }
+
             currentTranscriptionModel = savedModel
             ensureSelectedLanguageIsSupported(by: savedModel)
         }
@@ -97,6 +117,14 @@ class TranscriptionModelManager: ObservableObject {
         guard isAvailableOnCurrentOS(model) else {
             NotificationManager.shared.showNotification(
                 title: String(format: String(localized: "%@ requires macOS 26 or later"), model.displayName),
+                type: .error
+            )
+            return
+        }
+
+        guard CloudPolicy.isTranscriptionAllowed(model) else {
+            NotificationManager.shared.showNotification(
+                title: CloudPolicyError.cloudTranscriptionDisabled.localizedDescription,
                 type: .error
             )
             return
@@ -144,7 +172,10 @@ class TranscriptionModelManager: ObservableObject {
         if let currentSelection,
             let updatedModel = TranscriptionModelRegistry.model(forSelectionKey: currentSelection, in: allAvailableModels)
         {
-            if isAvailableOnCurrentOS(updatedModel) {
+            if !CloudPolicy.isTranscriptionAllowed(updatedModel) {
+                // Keep the saved cloud choice so it returns if the policy is lifted; use a local model meanwhile.
+                currentTranscriptionModel = cloudPolicyFallbackModel
+            } else if isAvailableOnCurrentOS(updatedModel) {
                 setDefaultTranscriptionModel(updatedModel)
             } else {
                 currentTranscriptionModel = nil
@@ -156,6 +187,8 @@ class TranscriptionModelManager: ObservableObject {
     }
 
     func refreshOpenRouterCatalog() async {
+        guard CloudPolicy.isCloudAllowed else { return }
+
         do {
             try await OpenRouterTranscriptionCatalog.refresh()
             refreshAllAvailableModels()

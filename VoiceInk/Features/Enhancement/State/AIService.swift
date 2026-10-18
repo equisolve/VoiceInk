@@ -263,6 +263,11 @@ class AIService: ObservableObject {
                 return false
             }
 
+            // Custom models are filtered per endpoint by CustomAIProviderManager.
+            guard provider == .custom || CloudPolicy.isEnhancementProviderAllowed(provider) else {
+                return false
+            }
+
             if provider == .custom {
                 return CustomAIProviderManager.shared.hasConfiguredModels
             } else if provider == .voiceInkRefine {
@@ -619,6 +624,15 @@ class AIService: ObservableObject {
     func verifyAPIKey(_ key: String, for provider: AIProvider, model: String? = nil) async -> (
         isValid: Bool, errorMessage: String?
     ) {
+        do {
+            try CloudPolicy.requireEnhancementProviderAllowed(
+                provider,
+                customBaseURL: provider == .custom ? provider.baseURL : nil
+            )
+        } catch {
+            return (false, error.localizedDescription)
+        }
+
         guard provider.requiresAPIKey else {
             return (true, nil)
         }
@@ -844,7 +858,7 @@ class AIService: ObservableObject {
 
     @MainActor
     func fetchOpenRouterModels() async {
-        guard !isOpenRouterCatalogRefreshing else { return }
+        guard CloudPolicy.isCloudAllowed, !isOpenRouterCatalogRefreshing else { return }
         isOpenRouterCatalogRefreshing = true
         defer { isOpenRouterCatalogRefreshing = false }
 

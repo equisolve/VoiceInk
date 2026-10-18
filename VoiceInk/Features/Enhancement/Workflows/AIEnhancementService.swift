@@ -79,6 +79,11 @@ class AIEnhancementService: ObservableObject {
     func isConfigured(for configuration: EnhancementRuntimeConfiguration) -> Bool {
         guard let provider = configuration.provider else { return false }
 
+        // A blocked provider counts as configured so the request path refuses it and the user sees why.
+        if !isAllowedByCloudPolicy(configuration) {
+            return true
+        }
+
         if provider == .voiceInkRefine {
             return aiService.voiceInkRefineService.isAvailableInModes
         }
@@ -95,6 +100,16 @@ class AIEnhancementService: ObservableObject {
         }
 
         return APIKeyManager.shared.hasAPIKey(forProvider: provider.rawValue)
+    }
+
+    private func isAllowedByCloudPolicy(_ configuration: EnhancementRuntimeConfiguration) -> Bool {
+        guard let provider = configuration.provider else { return true }
+        return CloudPolicy.isEnhancementProviderAllowed(provider, customBaseURL: customBaseURL(for: configuration))
+    }
+
+    private func customBaseURL(for configuration: EnhancementRuntimeConfiguration) -> String? {
+        guard configuration.provider == .custom, let modelName = configuration.modelName else { return nil }
+        return CustomAIProviderManager.shared.requestConfiguration(forModel: modelName)?.baseURL
     }
 
     private func waitForRateLimit() async throws {
@@ -188,6 +203,13 @@ class AIEnhancementService: ObservableObject {
         configuration: EnhancementRuntimeConfiguration,
         contextSnapshot: RecordingContextSnapshot?
     ) async throws -> (text: String, systemMessage: String?, userMessage: String?) {
+        if let provider = configuration.provider {
+            try CloudPolicy.requireEnhancementProviderAllowed(
+                provider,
+                customBaseURL: customBaseURL(for: configuration)
+            )
+        }
+
         guard isConfigured(for: configuration) else {
             throw EnhancementError.notConfigured
         }
