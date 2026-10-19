@@ -30,6 +30,8 @@ struct ManagedByOrganizationNotice: View {
 
 /// A one-line form caption for places where cloud options are hidden.
 struct ManagedByOrganizationCaption: View {
+    /// Defaults to the cloud-services heading.
+    var title: LocalizedStringKey?
     let message: LocalizedStringKey
 
     var body: some View {
@@ -37,7 +39,7 @@ struct ManagedByOrganizationCaption: View {
             Image(systemName: "building.2.fill")
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(CloudPolicy.isManaged ? "Managed by your organization" : "Cloud services are turned off")
+                Text(title ?? (CloudPolicy.isManaged ? "Managed by your organization" : "Cloud services are turned off"))
                     .fontWeight(.semibold)
                 Text(message)
                     .fixedSize(horizontal: false, vertical: true)

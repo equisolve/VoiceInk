@@ -4,6 +4,8 @@ import SwiftUI
 struct OnboardingTranscriptionSetupCard: View {
     @ObservedObject private var cloudPolicyMonitor = CloudPolicyMonitor.shared
     let localModel: FluidAudioModel?
+    /// The organization's profile chose the model, so the card offers only its download.
+    var isManagedSetup = false
     let setupKind: OnboardingTranscriptionSetupKind
     let providerOptions: [any CloudProvider]
     @Binding var selectedProviderKey: String
@@ -45,7 +47,11 @@ struct OnboardingTranscriptionSetupCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if CloudPolicy.isCloudAllowed {
+            if isManagedSetup {
+                ManagedByOrganizationCaption(
+                    title: "Managed by your organization",
+                    message: "Your organization chose this model. Continue when the download finishes.")
+            } else if CloudPolicy.isCloudAllowed {
                 setupSwitcher
             } else {
                 ManagedByOrganizationCaption(message: "Cloud transcription is off. Download a local model to continue.")

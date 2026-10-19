@@ -3,6 +3,7 @@ import SwiftUI
 struct OnboardingModelScreen: View {
     let contentMaxWidth: CGFloat
     let localModel: FluidAudioModel?
+    var isManagedSetup = false
     let setupKind: OnboardingTranscriptionSetupKind
     let providerOptions: [any CloudProvider]
     @Binding var selectedProviderKey: String
@@ -24,6 +25,7 @@ struct OnboardingModelScreen: View {
         ) {
             OnboardingTranscriptionSetupCard(
                 localModel: localModel,
+                isManagedSetup: isManagedSetup,
                 setupKind: setupKind,
                 providerOptions: providerOptions,
                 selectedProviderKey: $selectedProviderKey,
