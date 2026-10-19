@@ -4,8 +4,8 @@ import SwiftUI
 struct OnboardingTranscriptionSetupCard: View {
     @ObservedObject private var cloudPolicyMonitor = CloudPolicyMonitor.shared
     let localModel: FluidAudioModel?
-    /// The organization's profile chose the model, so the card offers only its download.
-    var isManagedSetup = false
+    /// Set in managed setup: the card offers only this model's download.
+    var managedModel: OnboardingManagedModel?
     let setupKind: OnboardingTranscriptionSetupKind
     let providerOptions: [any CloudProvider]
     @Binding var selectedProviderKey: String
@@ -47,21 +47,32 @@ struct OnboardingTranscriptionSetupCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if isManagedSetup {
+            if let managedModel {
                 ManagedByOrganizationCaption(
                     title: "Managed by your organization",
-                    message: "Your organization chose this model. Continue when the download finishes.")
-            } else if CloudPolicy.isCloudAllowed {
-                setupSwitcher
-            } else {
-                ManagedByOrganizationCaption(message: "Cloud transcription is off. Download a local model to continue.")
-            }
+                    message: managedModel.isOrganizationChoice
+                        ? "Your organization chose this model. Continue when the download finishes."
+                        : "Download this model to continue.")
 
-            switch setupKind {
-            case .local:
-                localSetup
-            case .cloud:
-                cloudSetup
+                if managedModel.model is FluidAudioModel {
+                    localSetup
+                } else {
+                    ManagedModelDownloadCard(model: managedModel.model)
+                }
+            } else {
+                if CloudPolicy.isCloudAllowed {
+                    setupSwitcher
+                } else {
+                    ManagedByOrganizationCaption(
+                        message: "Cloud transcription is off. Download a local model to continue.")
+                }
+
+                switch setupKind {
+                case .local:
+                    localSetup
+                case .cloud:
+                    cloudSetup
+                }
             }
         }
         .onAppear {

@@ -455,6 +455,75 @@ final class ManagedDefaultsTests: XCTestCase {
         XCTAssertEqual(waiting.currentStepNumber, 3)
     }
 
+    func testProgressDoesNotRepeatAStepAfterTheModelStep() {
+        defaults.set(parakeetV2, forKey: ManagedDefaults.transcriptionModelKey)
+        let coordinator = OnboardingCoordinator(defaults: defaults)
+        coordinator.storedStage = OnboardingStage.model.rawValue
+        let total = coordinator.totalStepCount
+        XCTAssertEqual(coordinator.currentStepNumber, 3)
+
+        // The download finishes and Continue goes to the first practice step.
+        coordinator.usableTranscriptionModelKeys = [parakeetV2]
+        coordinator.experienceStepIndex = 0
+        coordinator.storedStage = OnboardingStage.experience.rawValue
+        XCTAssertEqual(coordinator.currentStepNumber, 4)
+        XCTAssertEqual(coordinator.totalStepCount, total)
+
+        // Also after a relaunch.
+        let relaunched = OnboardingCoordinator(defaults: defaults)
+        relaunched.usableTranscriptionModelKeys = [parakeetV2]
+        XCTAssertEqual(relaunched.currentStepNumber, 4)
+    }
+
+    // MARK: - Managed model step
+
+    func testModelStepShowsTheOrganizationsWhisperModel() {
+        defaults.set("ggml-base.en", forKey: ManagedDefaults.transcriptionModelKey)
+        let coordinator = OnboardingCoordinator(defaults: defaults)
+
+        let content = coordinator.managedModelStepContent
+        XCTAssertTrue(content?.model is WhisperModel)
+        XCTAssertEqual(content?.model.selectionKey, "ggml-base.en")
+        XCTAssertEqual(content?.isOrganizationChoice, true)
+        XCTAssertNil(coordinator.requiredTranscriptionModel, "No Parakeet card stands in for the Whisper model")
+        XCTAssertEqual(coordinator.stageAfterMicrophone, .model)
+
+        coordinator.usableTranscriptionModelKeys = ["ggml-base.en"]
+        XCTAssertEqual(coordinator.stageAfterMicrophone, .experience)
+        XCTAssertEqual(coordinator.selectedOnboardingTranscriptionModelName, "ggml-base.en")
+    }
+
+    func testModelStepShowsTheOrganizationsTranscribeCppModel() {
+        defaults.set("cohere-transcribe", forKey: ManagedDefaults.transcriptionModelKey)
+        let content = OnboardingCoordinator(defaults: defaults).managedModelStepContent
+        XCTAssertTrue(content?.model is TranscribeCppModel)
+        XCTAssertEqual(content?.isOrganizationChoice, true)
+    }
+
+    func testModelStepShowsTheOrganizationsParakeetModel() {
+        defaults.set(parakeetV2, forKey: ManagedDefaults.transcriptionModelKey)
+        let coordinator = OnboardingCoordinator(defaults: defaults)
+        XCTAssertEqual(coordinator.managedModelStepContent?.model.selectionKey, parakeetV2)
+        XCTAssertEqual(coordinator.managedModelStepContent?.isOrganizationChoice, true)
+        XCTAssertEqual(coordinator.requiredTranscriptionModel?.name, parakeetV2)
+    }
+
+    func testModelStepFallsBackToParakeetWithoutClaimingTheOrganizationChoseIt() {
+        defaults.set("VoiceInk Refine", forKey: ManagedDefaults.enhancementProviderKey)
+        let enhancementOnly = OnboardingCoordinator(defaults: defaults).managedModelStepContent
+        XCTAssertEqual(enhancementOnly?.model.selectionKey, parakeet)
+        XCTAssertEqual(enhancementOnly?.isOrganizationChoice, false)
+
+        defaults.set("apple-speech", forKey: ManagedDefaults.transcriptionModelKey)
+        let noDownload = OnboardingCoordinator(defaults: defaults).managedModelStepContent
+        XCTAssertEqual(noDownload?.model.selectionKey, parakeet)
+        XCTAssertEqual(noDownload?.isOrganizationChoice, false)
+    }
+
+    func testNoManagedModelStepContentWithoutAProfile() {
+        XCTAssertNil(OnboardingCoordinator(defaults: defaults).managedModelStepContent)
+    }
+
     func testOnboardingSkipsWhenOnlyEnhancementIsManaged() {
         defaults.set("VoiceInk Refine", forKey: ManagedDefaults.enhancementProviderKey)
         XCTAssertTrue(OnboardingCoordinator(defaults: defaults).isManagedSetup)

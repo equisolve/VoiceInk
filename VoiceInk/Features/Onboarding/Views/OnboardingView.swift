@@ -55,7 +55,7 @@ struct OnboardingView: View {
                     OnboardingModelScreen(
                         contentMaxWidth: contentMaxWidth,
                         localModel: coordinator.requiredTranscriptionModel,
-                        isManagedSetup: coordinator.isManagedSetup,
+                        managedModel: coordinator.managedModelStepContent,
                         setupKind: coordinator.transcriptionSetupKind,
                         providerOptions: coordinator.onboardingTranscriptionProviderOptions,
                         selectedProviderKey: coordinator.selectedOnboardingTranscriptionProviderKeyBinding(),

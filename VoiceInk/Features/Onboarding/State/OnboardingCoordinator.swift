@@ -8,6 +8,16 @@ final class OnboardingCoordinator: ObservableObject {
     @Published var storedStage: String {
         didSet {
             defaults.set(storedStage, forKey: OnboardingStorageKeys.stage)
+            if storedStage == OnboardingStage.model.rawValue, !hasShownModelStep {
+                hasShownModelStep = true
+            }
+        }
+    }
+
+    /// True once the model step has shown. Managed setup keeps counting it afterward, so step numbers don't repeat.
+    @Published var hasShownModelStep: Bool {
+        didSet {
+            defaults.set(hasShownModelStep, forKey: OnboardingStorageKeys.shownModelStep)
         }
     }
 
@@ -74,6 +84,7 @@ final class OnboardingCoordinator: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         self.storedStage = defaults.string(forKey: OnboardingStorageKeys.stage) ?? OnboardingStage.permissions.rawValue
+        self.hasShownModelStep = defaults.bool(forKey: OnboardingStorageKeys.shownModelStep)
         self.storedActivePermission =
             defaults.string(forKey: OnboardingStorageKeys.activePermission)
             ?? OnboardingPermissionKind.microphone.rawValue
@@ -154,7 +165,7 @@ final class OnboardingCoordinator: ObservableObject {
     }
 
     private var showsManagedModelStep: Bool {
-        stage == .model || managedOnboardingTranscriptionModel == nil
+        stage == .model || hasShownModelStep || managedOnboardingTranscriptionModel == nil
     }
 
     var totalStepCount: Int {
@@ -439,14 +450,27 @@ final class OnboardingCoordinator: ObservableObject {
         return onboardingProviderOptions.first ?? .groq
     }
 
-    /// The local model the model step offers. In managed setup that is the organization's Parakeet model, so the
-    /// step shows the progress of the download VoiceInk already started.
+    /// The Parakeet model the model step's download card offers. In managed setup it's nil when the step shows
+    /// another kind of model (see `managedModelStepModel`).
     var requiredTranscriptionModel: FluidAudioModel? {
-        if isManagedSetup, let managedModel = managedDefaultsResolution.transcriptionModel as? FluidAudioModel {
-            return managedModel
+        if isManagedSetup {
+            return managedModelStepModel as? FluidAudioModel
         }
         return defaultOnboardingTranscriptionModel
     }
+
+    /// What the managed model step shows and downloads: the organization's default when it's a local model of any
+    /// kind, otherwise Parakeet V3 (for a profile that sets only enhancement, or a default that needs no download
+    /// but can't run yet). Nil outside managed setup.
+    var managedModelStepContent: OnboardingManagedModel? {
+        guard isManagedSetup else { return nil }
+        if let model = managedDefaultsResolution.transcriptionModel, ManagedModelDownload(transcriptionModel: model) != nil {
+            return OnboardingManagedModel(model: model, isOrganizationChoice: true)
+        }
+        return defaultOnboardingTranscriptionModel.map { OnboardingManagedModel(model: $0, isOrganizationChoice: false) }
+    }
+
+    private var managedModelStepModel: (any TranscriptionModel)? { managedModelStepContent?.model }
 
     private var defaultOnboardingTranscriptionModel: FluidAudioModel? {
         TranscriptionModelRegistry.models
@@ -519,9 +543,11 @@ enum OnboardingStorageKeys {
     static let transcriptionSetupKind = "onboardingTranscriptionSetupKind"
     static let transcriptionProvider = "onboardingTranscriptionProvider"
     static let skippedAPISetup = "onboardingSkippedAPISetup"
+    static let shownModelStep = "onboardingShownModelStep"
 
     static let onboardingKeys = [
         stage,
+        shownModelStep,
         activePermission,
         requestedScreenRecording,
         aiProvider,
