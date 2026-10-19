@@ -1,6 +1,6 @@
 # Managed deployment
 
-This page is for administrators who deploy VoiceInk with a mobile device management (MDM) service, such as Jamf Pro. It describes the preference key that turns off cloud services, the keys that set default models, and a sample configuration profile.
+This page is for administrators who deploy VoiceInk with a mobile device management (MDM) service, such as Jamf Pro. It describes the preference keys that turn off cloud services, set up an organization AI endpoint, and set default models, and gives a sample configuration profile.
 
 ## Turn off cloud services
 
@@ -16,8 +16,8 @@ When `DisableCloudServices` is `true`:
 
 - **Cloud transcription.** Every non-local transcription provider is hidden from model pickers and refused before any audio is read or sent. This includes Groq, ElevenLabs, Deepgram, Mistral, Gemini, Soniox, Speechmatics, AssemblyAI, xAI, Cartesia, OpenRouter, custom transcription endpoints, and any cloud provider added in a later release. Only Whisper, Parakeet, transcribe.cpp, and Apple Speech models are available.
 - **Modes that use a cloud transcription model.** VoiceInk uses the default transcription model if it's local and downloaded, otherwise the first downloaded local model. If no local model is downloaded, recording stops with an error that tells the user to choose a local model. Audio is never sent to a cloud service.
-- **Cloud AI enhancement.** Only VoiceInk Refine, Ollama, and custom OpenAI-compatible models are available, and Ollama and custom models only when their server URL host is `localhost`, `127.0.0.1`, or `::1`. VoiceInk refuses an Ollama server on another computer, including model listing and connection checks. The CLI provider is turned off, because the command it runs can reach cloud services. All other providers are hidden and refused before any text is sent.
-- **Modes that use a blocked AI provider.** VoiceInk pastes the transcript without AI enhancement and shows a short notice with the reason.
+- **Cloud AI enhancement.** Only VoiceInk Refine, Ollama, custom OpenAI-compatible models, and the [organization AI endpoint](#provide-an-organization-ai-endpoint) are available. Ollama and custom models are allowed only when their server URL host is `localhost`, `127.0.0.1`, or `::1`, or when the URL is inside the organization AI endpoint. VoiceInk refuses an Ollama server on another computer, including model listing and connection checks. The CLI provider is turned off, because the command it runs can reach cloud services. All other providers are hidden and refused before any text is sent.
+- **Modes that use a blocked AI provider.** VoiceInk uses the organization AI endpoint when one is set up. Otherwise, it pastes the transcript without AI enhancement and shows a short notice with the reason.
 - **API key entry.** The **Cloud** tab in **AI Models** shows a notice instead of the provider list, and onboarding skips the cloud provider steps. Keys already saved in the Keychain are ignored, not deleted, so they work again if the key is removed.
 - **Auto-Learn Dictionary.** Auto-Learn requests go through the same check, so they can use only the allowed AI providers.
 - **Model catalog refreshes.** VoiceInk doesn't download the OpenRouter model lists.
@@ -33,6 +33,35 @@ The key covers transcription and AI enhancement. These network connections aren'
 - In-app announcements. To turn them off, set `enableAnnouncements` to `false`.
 - License activation and validation.
 
+## Provide an organization AI endpoint
+
+To give users AI enhancement through a service your organization runs, set these keys in the `com.prakashjoshipax.VoiceInk` domain. The endpoint must accept OpenAI-compatible chat completion requests.
+
+| Key | Type | Value |
+| --- | --- | --- |
+| `ManagedAIEndpointURL` | String | The base URL of the API, such as `https://ai.example.com/v1`. VoiceInk sends requests to `chat/completions` under it. A URL that already ends in `/chat/completions` is used as is. |
+| `ManagedAIModel` | String | The model name to send with each request. |
+| `ManagedAIToken` | String | The token to send in an `Authorization: Bearer` header. Optional. |
+| `ManagedAIProviderName` | String | The provider name users see. Optional. The default is **Organization AI**. |
+
+When `ManagedAIEndpointURL` and `ManagedAIModel` are both set:
+
+- The **Cloud** tab in **AI Models** shows the provider, model, and endpoint as read-only, labeled **Managed by your organization** when the values come from a configuration profile. The token itself isn't shown.
+- The provider is first in the AI provider lists and becomes the selected provider when it first appears or when its URL or model changes. Users can pick another allowed provider afterward.
+- VoiceInk reads the token for each request. It doesn't copy the token to the Keychain, logs, or history.
+- Changes to these keys apply while the app runs.
+
+When `DisableCloudServices` is also `true`:
+
+- VoiceInk sends text only to loopback hosts and to URLs inside the endpoint: the same scheme, host, and port, with a path that starts with the endpoint's path. With `https://ai.example.com/v1`, VoiceInk allows `https://ai.example.com/v1/chat/completions`, but not `https://ai.example.com/v2`, `https://ai.example.com:8443/v1`, or `https://ai.example.com.example.net/v1`.
+- The endpoint must use `https` unless its host is `localhost`, `127.0.0.1`, or `::1`. VoiceInk refuses an `http` endpoint on another host, so the token is never sent unencrypted.
+- Modes set to a blocked provider use the organization provider.
+- Transcription is unchanged. Only local transcription models are available.
+
+When `DisableCloudServices` is `false` or absent, the organization provider is added to the providers users already have, and every other provider stays available.
+
+**Warning:** Any user or process on the Mac can read a value delivered in a configuration profile, including `ManagedAIToken`. Use a token that works only with your proxy and that you can revoke, never an API key for an AI provider.
+
 ## Other useful keys
 
 All of these keys are in the `com.prakashjoshipax.VoiceInk` domain.
@@ -40,6 +69,7 @@ All of these keys are in the `com.prakashjoshipax.VoiceInk` domain.
 | Key | Type | Effect |
 | --- | --- | --- |
 | `DisableCloudServices` | Boolean | `true` turns off cloud transcription and cloud AI enhancement, as described on this page. |
+| `ManagedAIEndpointURL`, `ManagedAIModel`, `ManagedAIToken`, `ManagedAIProviderName` | String | Set up an organization AI endpoint, as described in [Provide an organization AI endpoint](#provide-an-organization-ai-endpoint). |
 | `IsAutoLearnDictionaryEnabled` | Boolean | `false` turns off Auto-Learn Dictionary. |
 | `enableAnnouncements` | Boolean | `false` turns off in-app announcements. |
 | `VoiceInkChecksForUpdatesOnLaunch` | Boolean | `false` turns off automatic update checks. |
@@ -48,7 +78,7 @@ All of these keys are in the `com.prakashjoshipax.VoiceInk` domain.
 
 ## Sample configuration profile
 
-This profile sets all of the keys in the previous table. Upload it to your MDM service as a custom configuration profile, or paste the inner dictionary under `mcx_preference_settings` into a custom settings payload for the `com.prakashjoshipax.VoiceInk` domain. Replace the `PayloadUUID` values with your own (run `uuidgen`), and change `PayloadIdentifier` and `PayloadOrganization` to match your organization.
+This profile sets all of the keys in the previous table. Replace the `ManagedAI` values with your endpoint, model, and token, or remove those keys if you don't run an AI endpoint. Upload it to your MDM service as a custom configuration profile, or paste the inner dictionary under `mcx_preference_settings` into a custom settings payload for the `com.prakashjoshipax.VoiceInk` domain. Replace the `PayloadUUID` values with your own (run `uuidgen`), and change `PayloadIdentifier` and `PayloadOrganization` to match your organization.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -79,6 +109,14 @@ This profile sets all of the keys in the previous table. Upload it to your MDM s
                             <dict>
                                 <key>DisableCloudServices</key>
                                 <true/>
+                                <key>ManagedAIEndpointURL</key>
+                                <string>https://ai.example.com/v1</string>
+                                <key>ManagedAIModel</key>
+                                <string>MODEL_NAME</string>
+                                <key>ManagedAIToken</key>
+                                <string>PROXY_ONLY_TOKEN</string>
+                                <key>ManagedAIProviderName</key>
+                                <string>Example AI</string>
                                 <key>IsAutoLearnDictionaryEnabled</key>
                                 <false/>
                                 <key>enableAnnouncements</key>

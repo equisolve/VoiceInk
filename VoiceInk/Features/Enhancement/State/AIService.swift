@@ -19,6 +19,13 @@ enum AIProvider: String, CaseIterable {
     case ollama = "Ollama"
     case localCLI = "Local CLI"
     case custom = "Custom"
+    /// The organization's AI endpoint from managed preferences. See `ManagedAIEndpoint`.
+    case managed = "Managed"
+
+    /// The name to show in the UI. Every provider except the managed one shows its raw value.
+    var displayName: String {
+        self == .managed ? (ManagedAIEndpoint.current?.providerName ?? ManagedAIEndpoint.defaultProviderName) : rawValue
+    }
 
     var baseURL: String {
         switch self {
@@ -54,6 +61,8 @@ enum AIProvider: String, CaseIterable {
             return ""
         case .custom:
             return UserDefaults.standard.string(forKey: "customProviderBaseURL") ?? ""
+        case .managed:
+            return ManagedAIEndpoint.current?.baseURL.absoluteString ?? ""
         }
     }
 
@@ -91,6 +100,8 @@ enum AIProvider: String, CaseIterable {
             return CustomAIProviderManager.shared.defaultModelName
         case .openRouter:
             return "qwen/qwen3.8-27b"
+        case .managed:
+            return ManagedAIEndpoint.current?.model ?? ""
         }
     }
 
@@ -164,12 +175,14 @@ enum AIProvider: String, CaseIterable {
             return CustomAIProviderManager.shared.availableModelNames
         case .openRouter:
             return []
+        case .managed:
+            return ManagedAIEndpoint.current.map { [$0.model] } ?? []
         }
     }
 
     var requiresAPIKey: Bool {
         switch self {
-        case .voiceInkRefine, .ollama, .localCLI:
+        case .voiceInkRefine, .ollama, .localCLI, .managed:
             return false
         default:
             return true
@@ -258,8 +271,9 @@ class AIService: ObservableObject {
     private var isOpenRouterCatalogRefreshing = false
     @Published private(set) var isOllamaRefreshing = false
 
+    /// The organization's provider comes first, so it's the default wherever the first connected provider is used.
     var connectedProviders: [AIProvider] {
-        AIProvider.allCases.filter { provider in
+        let providers = AIProvider.allCases.filter { provider in
             guard provider.supportsEnhancement else {
                 return false
             }
@@ -269,7 +283,10 @@ class AIService: ObservableObject {
                 return false
             }
 
-            if provider == .custom {
+            if provider == .managed {
+                // The policy check above already requires a configured managed endpoint.
+                return true
+            } else if provider == .custom {
                 return CustomAIProviderManager.shared.hasConfiguredModels
             } else if provider == .voiceInkRefine {
                 return voiceInkRefineService.isAvailableInModes
@@ -282,10 +299,14 @@ class AIService: ObservableObject {
             }
             return false
         }
+        guard let managedIndex = providers.firstIndex(of: .managed) else { return providers }
+        var ordered = providers
+        ordered.remove(at: managedIndex)
+        return [.managed] + ordered
     }
 
     var currentModel: String {
-        if selectedProvider == .voiceInkRefine {
+        if selectedProvider == .voiceInkRefine || selectedProvider == .managed {
             return selectedProvider.defaultModel
         }
 
@@ -300,7 +321,8 @@ class AIService: ObservableObject {
     }
 
     func selectedModel(for provider: AIProvider) -> String {
-        if provider == .voiceInkRefine {
+        // The organization sets the managed model; it can't be changed in the app.
+        if provider == .voiceInkRefine || provider == .managed {
             return provider.defaultModel
         }
 
@@ -377,6 +399,8 @@ class AIService: ObservableObject {
 
         loadSavedModelSelections()
         loadSavedOpenRouterModels()
+        appliedManagedMarker = userDefaults.string(forKey: Self.managedSelectionMarkerKey)
+        applyManagedProviderSelection()
         initializeAutoLearnSelectionIfNeeded()
 
         // Observe installation state without forwarding every progress update to the entire scene.
@@ -422,14 +446,48 @@ class AIService: ObservableObject {
             self?.initializeAutoLearnSelectionIfNeeded()
         }
 
-        // Connected providers depend on cloud policy, so republish them when it changes.
+        // Connected providers depend on cloud policy and the managed endpoint, so republish them when either changes.
         cloudPolicyObserver = NotificationCenter.default.addObserver(
             forName: .cloudPolicyDidChange,
             object: nil,
             queue: .main
         ) { [weak self] _ in
+            self?.applyManagedProviderSelection()
             self?.objectWillChange.send()
         }
+    }
+
+    private static let managedSelectionMarkerKey = "ManagedAIProviderSelectedEndpoint"
+
+    /// The managed endpoint this instance last applied. The app runs more than one `AIService`, so each one tracks its
+    /// own; the saved value carries it across launches.
+    private var appliedManagedMarker: String?
+
+    /// Selects the organization's provider the first time a managed endpoint appears or changes, and whenever the
+    /// selected provider is blocked by cloud policy. Moves off it when the managed endpoint is removed.
+    func applyManagedProviderSelection() {
+        guard let endpoint = ManagedAIEndpoint.current,
+            CloudPolicy.isEnhancementProviderAllowed(.managed, managedEndpoint: endpoint)
+        else {
+            if selectedProvider == .managed {
+                selectedProvider = connectedProviders.first ?? .gemini
+            }
+            return
+        }
+
+        let marker = "\(endpoint.baseURL.absoluteString)|\(endpoint.model)"
+        let isNewEndpoint = appliedManagedMarker != marker
+        let isSelectionBlocked = !CloudPolicy.isEnhancementProviderAllowed(
+            selectedProvider,
+            customBaseURL: selectedProvider == .custom
+                ? CustomAIProviderManager.shared.requestConfiguration(forModel: selectedModel(for: .custom))?.baseURL
+                : nil
+        )
+        if isNewEndpoint || isSelectionBlocked, selectedProvider != .managed {
+            selectedProvider = .managed
+        }
+        appliedManagedMarker = marker
+        userDefaults.set(marker, forKey: Self.managedSelectionMarkerKey)
     }
 
     deinit {

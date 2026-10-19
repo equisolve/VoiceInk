@@ -94,6 +94,10 @@ class AIEnhancementService: ObservableObject {
             return true
         }
 
+        if provider == .managed {
+            return ManagedAIEndpoint.current != nil
+        }
+
         if provider == .custom {
             guard let modelName = configuration.modelName else { return false }
             return CustomAIProviderManager.shared.requestConfiguration(forModel: modelName) != nil
