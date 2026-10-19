@@ -79,9 +79,10 @@ struct OnboardingView: View {
                         onVerificationChanged: coordinator.flow.refreshTranscriptionSetupVerification,
                         onBack: coordinator.flow.goToMicrophoneStep,
                         onContinue: {
-                            coordinator.flow.goToAPIStep(
+                            coordinator.flow.continueFromModelStep(
                                 isTranscriptionSetupReady: isTranscriptionSetupReady,
-                                aiService: aiService
+                                aiService: aiService,
+                                enhancementService: enhancementService
                             )
                         }
                     )
@@ -247,6 +248,7 @@ struct OnboardingView: View {
         }
         .animation(.easeInOut(duration: 0.22), value: coordinator.stage)
         .onAppear {
+            refreshUsableTranscriptionModels()
             coordinator.flow.ensureDefaultOnboardingTranscriptionProvider()
             coordinator.flow.refreshTranscriptionSetupVerification()
             coordinator.flow.ensureDefaultOnboardingProvider()
@@ -263,6 +265,9 @@ struct OnboardingView: View {
         }
         .onDisappear {
             coordinator.permissions.cancelRefreshTask()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .transcriptionModelsDidChange)) { _ in
+            refreshUsableTranscriptionModels()
         }
         .onReceive(LifecycleObserver.shared.publisher(for: .applicationDidBecomeActive)) { _ in
             coordinator.permissions.refreshPermissionStatuses()
@@ -295,6 +300,10 @@ struct OnboardingView: View {
             coordinator.flow.activateExperienceModeForDemo()
             coordinator.flow.refreshExperienceModeState(enhancementService: enhancementService)
         }
+    }
+
+    private func refreshUsableTranscriptionModels() {
+        coordinator.usableTranscriptionModelKeys = Set(transcriptionModelManager.usableModels.map(\.selectionKey))
     }
 
     private var showsSkipButton: Bool {

@@ -30,7 +30,21 @@ final class OnboardingFlowController {
             return
         }
 
+        // Managed setup reaches here only with a model that can run now.
         goToExperienceStep(isTranscriptionSetupReady: true, enhancementService: enhancementService)
+    }
+
+    func continueFromModelStep(
+        isTranscriptionSetupReady: Bool,
+        aiService: AIService,
+        enhancementService: AIEnhancementService
+    ) {
+        guard coordinator.stageAfterModel == .experience else {
+            goToAPIStep(isTranscriptionSetupReady: isTranscriptionSetupReady, aiService: aiService)
+            return
+        }
+
+        goToExperienceStep(isTranscriptionSetupReady: isTranscriptionSetupReady, enhancementService: enhancementService)
     }
 
     func goToAPIStep(
@@ -267,8 +281,9 @@ final class OnboardingFlowController {
             goToPermissionsStep()
         }
 
-        // A profile with managed defaults can arrive while the model or API key screen is showing.
-        if (coordinator.stage == .model || coordinator.stage == .api) && coordinator.isManagedSetup {
+        // A profile with managed defaults can arrive while the API key screen is showing. The model screen stays,
+        // since managed setup waits there for a model to download.
+        if coordinator.stage == .api && coordinator.isManagedSetup {
             goToFirstIncompleteSetupStep(isTranscriptionSetupReady: isTranscriptionSetupReady)
         }
 

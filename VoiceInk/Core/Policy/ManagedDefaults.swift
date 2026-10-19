@@ -104,10 +104,13 @@ struct ManagedDefaultsResolution {
     var downloads: [ManagedModelDownload] = []
     var ignored: [String] = []
 
+    /// - Parameter voiceInkRefineUnavailableReason: Why VoiceInk Refine can't run on this Mac, or nil when it can.
+    ///   Comes from `VoiceInkRefineService.unavailableDescription` (Apple silicon with at least 16 GB of memory).
     init(
         _ managed: ManagedDefaults,
         transcriptionModels: [any TranscriptionModel],
-        isCloudAllowed: Bool
+        isCloudAllowed: Bool,
+        voiceInkRefineUnavailableReason: String?
     ) {
         if let id = managed.transcriptionModel {
             if let model = TranscriptionModelRegistry.model(forSelectionKey: id, in: transcriptionModels) {
@@ -123,24 +126,38 @@ struct ManagedDefaultsResolution {
 
         if let name = managed.enhancementProvider {
             if let provider = Self.enhancementProvider(named: name) {
-                if CloudPolicy.isEnhancementProviderAllowed(provider, cloudAllowed: isCloudAllowed) {
+                if !CloudPolicy.isEnhancementProviderAllowed(provider, cloudAllowed: isCloudAllowed) {
+                    ignored.append("\(ManagedDefaults.enhancementProviderKey) \(name) is blocked while cloud services are off")
+                } else if provider == .voiceInkRefine, let reason = voiceInkRefineUnavailableReason {
+                    ignored.append("\(ManagedDefaults.enhancementProviderKey) \(name) can't run on this Mac: \(reason)")
+                } else {
                     enhancementProvider = provider
                     enhancementModel = provider == .voiceInkRefine ? provider.defaultModel : managed.enhancementModel
-                } else {
-                    ignored.append("\(ManagedDefaults.enhancementProviderKey) \(name) is blocked while cloud services are off")
                 }
             } else {
                 ignored.append("\(ManagedDefaults.enhancementProviderKey) \(name) is not an enhancement provider")
             }
         }
 
-        enhancementEnabled = managed.enhancementEnabled
+        // Turning enhancement on only makes sense with the provider the organization chose. Turning it off is
+        // always safe.
+        if managed.enhancementEnabled == true, managed.enhancementProvider != nil, enhancementProvider == nil {
+            ignored.append(
+                "\(ManagedDefaults.enhancementEnabledKey) is ignored because \(ManagedDefaults.enhancementProviderKey) wasn't applied"
+            )
+        } else {
+            enhancementEnabled = managed.enhancementEnabled
+        }
 
         for id in managed.autoDownloadModels {
             if id.caseInsensitiveCompare(VoiceInkRefineService.modelName) == .orderedSame
                 || id.caseInsensitiveCompare(VoiceInkRefineService.providerName) == .orderedSame
             {
-                append(.voiceInkRefine)
+                if let reason = voiceInkRefineUnavailableReason {
+                    ignored.append("\(ManagedDefaults.autoDownloadModelsKey) \(id) can't run on this Mac: \(reason)")
+                } else {
+                    append(.voiceInkRefine)
+                }
             } else if let model = TranscriptionModelRegistry.model(forSelectionKey: id, in: transcriptionModels) {
                 if let download = ManagedModelDownload(transcriptionModel: model) {
                     append(download)

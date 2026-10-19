@@ -8,6 +8,7 @@ private final class FakeManagedDefaultsTarget: ManagedDefaultsTarget {
     var transcriptionModels: [any TranscriptionModel] = TranscriptionModelRegistry.models
     var currentTranscriptionSelectionKey: String? = "apple-speech"
     var canApplySettings = true
+    var voiceInkRefineUnavailableReason: String?
     var downloaded: [ManagedModelDownload] = []
     var downloading: [ManagedModelDownload] = []
 
@@ -199,16 +200,65 @@ final class ManagedDefaultsTests: XCTestCase {
         setProfile(transcription: cloudModel.selectionKey, provider: "Groq", model: "llama", enabled: true, version: 1)
 
         let resolution = ManagedDefaultsResolution(
-            ManagedDefaults(defaults: defaults), transcriptionModels: target.transcriptionModels, isCloudAllowed: false)
+            ManagedDefaults(defaults: defaults), transcriptionModels: target.transcriptionModels, isCloudAllowed: false,
+            voiceInkRefineUnavailableReason: nil)
         XCTAssertNil(resolution.transcriptionModel)
         XCTAssertNil(resolution.enhancementProvider)
-        XCTAssertEqual(resolution.ignored.count, 2, "\(resolution.ignored)")
+        XCTAssertNil(resolution.enhancementEnabled, "Enhancement isn't turned on without the chosen provider")
+        XCTAssertEqual(resolution.ignored.count, 3, "\(resolution.ignored)")
 
         makeApplier().apply()
 
         XCTAssertEqual(target.selectedModels, [])
+        XCTAssertEqual(target.enhancements.count, 0)
+        XCTAssertEqual(defaults.integer(forKey: ManagedDefaults.appliedVersionKey), 1)
+    }
+
+    func testTurningEnhancementOffAppliesEvenWhenTheProviderIsBlocked() {
+        cloudAllowed = false
+        setProfile(provider: "Groq", enabled: false, version: 1)
+
+        makeApplier().apply()
+
         XCTAssertEqual(target.enhancements.count, 1)
-        XCTAssertNil(target.enhancements.first?.provider, "The blocked provider is not applied")
+        XCTAssertNil(target.enhancements.first?.provider)
+        XCTAssertEqual(target.enhancements.first?.enabled, false)
+    }
+
+    // MARK: - VoiceInk Refine memory requirement
+
+    func testRefineDefaultsSkippedOnAMacThatCantRunIt() {
+        target.voiceInkRefineUnavailableReason = "Requires at least 16 GB of memory."
+        target.downloaded = [.transcription(selectionKey: parakeet)]
+        setProfile(
+            transcription: parakeet, provider: "VoiceInk Refine", enabled: true,
+            downloads: [parakeet, "VoiceInk Refine V1"], version: 1)
+
+        let resolution = ManagedDefaultsResolution(
+            ManagedDefaults(defaults: defaults), transcriptionModels: target.transcriptionModels, isCloudAllowed: true,
+            voiceInkRefineUnavailableReason: target.voiceInkRefineUnavailableReason)
+        XCTAssertNil(resolution.enhancementProvider)
+        XCTAssertNil(resolution.enhancementEnabled)
+        XCTAssertEqual(resolution.downloads, [.transcription(selectionKey: parakeet)])
+        XCTAssertEqual(resolution.ignored.count, 3, "\(resolution.ignored)")
+        XCTAssertTrue(
+            resolution.ignored.allSatisfy { $0.contains("16 GB") || $0.contains("wasn't applied") }, "\(resolution.ignored)")
+
+        makeApplier().apply()
+
+        XCTAssertEqual(target.startedDownloads, [], "Refine isn't downloaded, and Parakeet is already on disk")
+        XCTAssertEqual(target.enhancements.count, 0, "Enhancement stays as it was")
+        XCTAssertEqual(target.selectedModels, [parakeet], "The transcription default still applies")
+    }
+
+    func testRefineDefaultsAppliedOnAMacThatCanRunIt() {
+        target.downloaded = [.transcription(selectionKey: parakeet)]
+        setProfile(provider: "VoiceInk Refine", enabled: true, downloads: ["VoiceInk Refine V1"], version: 1)
+
+        makeApplier().apply()
+
+        XCTAssertEqual(target.startedDownloads, [.voiceInkRefine])
+        XCTAssertEqual(target.enhancements.first?.provider, .voiceInkRefine)
         XCTAssertEqual(target.enhancements.first?.enabled, true)
     }
 
@@ -227,7 +277,8 @@ final class ManagedDefaultsTests: XCTestCase {
         let resolution = ManagedDefaultsResolution(
             ManagedDefaults(transcriptionModel: parakeet, enhancementProvider: "voiceink refine", enhancementModel: "other"),
             transcriptionModels: target.transcriptionModels,
-            isCloudAllowed: false
+            isCloudAllowed: false,
+            voiceInkRefineUnavailableReason: nil
         )
         XCTAssertEqual(resolution.transcriptionModel?.selectionKey, parakeet)
         XCTAssertEqual(resolution.enhancementProvider, .voiceInkRefine)
@@ -244,7 +295,8 @@ final class ManagedDefaultsTests: XCTestCase {
                 parakeet, "VoiceInk Refine V1", "apple-speech", "no-such-model", cloudID, parakeet, "VoiceInk Refine",
             ]),
             transcriptionModels: target.transcriptionModels,
-            isCloudAllowed: true
+            isCloudAllowed: true,
+            voiceInkRefineUnavailableReason: nil
         )
 
         XCTAssertEqual(resolution.downloads, [.transcription(selectionKey: parakeet), .voiceInkRefine])
@@ -325,9 +377,10 @@ final class ManagedDefaultsTests: XCTestCase {
         XCTAssertFalse(coordinator.isTranscriptionSetupReady(isTranscriptionModelDownloaded: false))
     }
 
-    func testOnboardingSkipsModelAndAPIKeyStepsWithManagedDefaults() {
+    func testOnboardingSkipsModelAndAPIKeyStepsWhenTheManagedModelIsReady() {
         defaults.set(parakeetV2, forKey: ManagedDefaults.transcriptionModelKey)
         let coordinator = OnboardingCoordinator(defaults: defaults)
+        coordinator.usableTranscriptionModelKeys = [parakeetV2]
 
         XCTAssertTrue(coordinator.isManagedSetup)
         XCTAssertEqual(coordinator.stageAfterMicrophone, .experience)
@@ -337,6 +390,69 @@ final class ManagedDefaultsTests: XCTestCase {
         XCTAssertEqual(coordinator.selectedOnboardingTranscriptionModelName, parakeetV2)
         XCTAssertFalse(coordinator.activeExperienceSteps.isEmpty)
         XCTAssertTrue(coordinator.activeExperienceSteps.allSatisfy { !$0.requiresVerifiedAPIProvider })
+    }
+
+    func testManagedOnboardingWaitsOnTheModelStepWhileTheModelDownloads() {
+        defaults.set(parakeetV2, forKey: ManagedDefaults.transcriptionModelKey)
+        let coordinator = OnboardingCoordinator(defaults: defaults)
+        coordinator.usableTranscriptionModelKeys = ["apple-speech"]
+
+        XCTAssertNil(coordinator.managedOnboardingTranscriptionModel, "Apple Speech isn't a downloaded fallback")
+        XCTAssertFalse(coordinator.isTranscriptionSetupReady(isTranscriptionModelDownloaded: true))
+        XCTAssertEqual(coordinator.stageAfterMicrophone, .model)
+        XCTAssertEqual(coordinator.requiredTranscriptionModel?.name, parakeetV2, "The model step shows this download")
+        XCTAssertEqual(coordinator.transcriptionSetupKind, .local)
+        XCTAssertEqual(coordinator.stageAfterModel, .experience)
+
+        // The download finishes.
+        coordinator.usableTranscriptionModelKeys.insert(parakeetV2)
+        XCTAssertTrue(coordinator.isTranscriptionSetupReady(isTranscriptionModelDownloaded: false))
+        XCTAssertEqual(coordinator.selectedOnboardingTranscriptionModelName, parakeetV2)
+    }
+
+    func testManagedOnboardingFallsBackToADownloadedLocalModel() {
+        defaults.set(parakeetV2, forKey: ManagedDefaults.transcriptionModelKey)
+        let coordinator = OnboardingCoordinator(defaults: defaults)
+        coordinator.usableTranscriptionModelKeys = [parakeet]
+
+        XCTAssertEqual(coordinator.managedOnboardingTranscriptionModel?.selectionKey, parakeet)
+        XCTAssertTrue(coordinator.isTranscriptionSetupReady(isTranscriptionModelDownloaded: false))
+        XCTAssertEqual(coordinator.stageAfterMicrophone, .experience)
+        XCTAssertEqual(coordinator.selectedOnboardingTranscriptionModelName, parakeet, "Practice uses the fallback")
+    }
+
+    func testNoModelStepWhenOnlyEnhancementIsManagedAndParakeetIsReady() {
+        defaults.set("VoiceInk Refine", forKey: ManagedDefaults.enhancementProviderKey)
+        let coordinator = OnboardingCoordinator(defaults: defaults)
+        XCTAssertEqual(coordinator.stageAfterMicrophone, .model, "Nothing downloaded yet")
+
+        coordinator.usableTranscriptionModelKeys = [parakeet]
+        XCTAssertEqual(coordinator.stageAfterMicrophone, .experience)
+        XCTAssertEqual(coordinator.selectedOnboardingTranscriptionModelName, parakeet)
+    }
+
+    // MARK: - Onboarding progress
+
+    func testProgressCountsOnlyTheStepsManagedSetupShows() {
+        // Upstream with the API step skipped has the same practice steps as managed setup.
+        let skipped = OnboardingCoordinator(defaults: defaults)
+        skipped.hasSkippedAPISetup = true
+        let upstreamTotal = skipped.totalStepCount
+        defaults.removeObject(forKey: OnboardingStorageKeys.skippedAPISetup)
+
+        defaults.set(parakeetV2, forKey: ManagedDefaults.transcriptionModelKey)
+        defaults.set(OnboardingStage.experience.rawValue, forKey: OnboardingStorageKeys.stage)
+        defaults.set(0, forKey: OnboardingStorageKeys.experienceIndex)
+        let ready = OnboardingCoordinator(defaults: defaults)
+        ready.usableTranscriptionModelKeys = [parakeetV2]
+        XCTAssertEqual(ready.activeExperienceSteps.count, skipped.activeExperienceSteps.count)
+        XCTAssertEqual(ready.totalStepCount, upstreamTotal - 2, "No model step and no API key step")
+        XCTAssertEqual(ready.currentStepNumber, 3, "The first practice step follows the microphone step")
+
+        defaults.set(OnboardingStage.model.rawValue, forKey: OnboardingStorageKeys.stage)
+        let waiting = OnboardingCoordinator(defaults: defaults)
+        XCTAssertEqual(waiting.totalStepCount, upstreamTotal - 1, "The model step counts while it shows")
+        XCTAssertEqual(waiting.currentStepNumber, 3)
     }
 
     func testOnboardingSkipsWhenOnlyEnhancementIsManaged() {

@@ -62,6 +62,9 @@ final class OnboardingCoordinator: ObservableObject {
     @Published var experienceTextByKind: [OnboardingExperienceKind: String] = [:]
     @Published var isExperienceInIntroPhase = true
     @Published var clearedExperienceShortcutActions: Set<ShortcutAction> = []
+    /// Selection keys of the transcription models that can run now. `OnboardingView` keeps it current from the
+    /// model managers; managed setup uses it to decide whether a practice step can start.
+    @Published var usableTranscriptionModelKeys: Set<String> = []
 
     let defaults: UserDefaults
     var refreshTask: Task<Void, Never>?
@@ -133,21 +136,32 @@ final class OnboardingCoordinator: ObservableObject {
         }
 
         if stage == .trust {
-            return OnboardingStage.baseStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 1
+            return setupStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 1
         }
 
         if stage == .license {
-            return OnboardingStage.baseStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 2
+            return setupStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 2
         }
 
         return stage.stepNumber
     }
 
+    /// Steps before the practice steps. Managed setup skips the API key step, and the model step too unless
+    /// onboarding has to wait there for a transcription model.
+    var setupStepCount: Int {
+        guard isManagedSetup else { return OnboardingStage.baseStepCount }
+        return showsManagedModelStep ? OnboardingStage.model.stepNumber : OnboardingStage.microphone.stepNumber
+    }
+
+    private var showsManagedModelStep: Bool {
+        stage == .model || managedOnboardingTranscriptionModel == nil
+    }
+
     var totalStepCount: Int {
         #if LOCAL_BUILD
-            OnboardingStage.baseStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 1
+            setupStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 1
         #else
-            OnboardingStage.baseStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 2
+            setupStepCount + activeExperienceSteps.count + contextAwarenessStepCount + 2
         #endif
     }
 
@@ -260,7 +274,7 @@ final class OnboardingCoordinator: ObservableObject {
     }
 
     var transcriptionSetupKind: OnboardingTranscriptionSetupKind {
-        guard CloudPolicy.isCloudAllowed else { return .local }
+        guard CloudPolicy.isCloudAllowed, !isManagedSetup else { return .local }
         return OnboardingTranscriptionSetupKind(rawValue: storedTranscriptionSetupKind) ?? .local
     }
 
@@ -289,8 +303,8 @@ final class OnboardingCoordinator: ObservableObject {
     }
 
     var selectedOnboardingTranscriptionModel: (any TranscriptionModel)? {
-        if let managedModel = managedDefaultsResolution.transcriptionModel {
-            return managedModel
+        if isManagedSetup {
+            return managedOnboardingTranscriptionModel ?? managedTargetTranscriptionModel
         }
 
         switch transcriptionSetupKind {
@@ -324,8 +338,9 @@ final class OnboardingCoordinator: ObservableObject {
 
     // MARK: - Managed setup
 
-    /// True when the organization's profile sets up transcription or enhancement. Onboarding then skips choosing
-    /// a transcription model and entering an API key, and keeps the permission and microphone steps.
+    /// True when the organization's profile sets up transcription or enhancement. Onboarding then skips entering an
+    /// API key, and skips the model step unless it has to wait there for a transcription model to download. The
+    /// permission and microphone steps stay.
     var isManagedSetup: Bool {
         ManagedDefaults(defaults: defaults).isPresent
     }
@@ -334,8 +349,28 @@ final class OnboardingCoordinator: ObservableObject {
         ManagedDefaultsResolution(
             ManagedDefaults(defaults: defaults),
             transcriptionModels: TranscriptionModelRegistry.models,
-            isCloudAllowed: CloudPolicy.isCloudAllowed(in: defaults)
+            isCloudAllowed: CloudPolicy.isCloudAllowed(in: defaults),
+            voiceInkRefineUnavailableReason: VoiceInkRefineService.shared.unavailableDescription
         )
+    }
+
+    /// The model the organization chose, or the usual onboarding model when the profile sets only enhancement.
+    var managedTargetTranscriptionModel: (any TranscriptionModel)? {
+        if let model = managedDefaultsResolution.transcriptionModel { return model }
+        return defaultOnboardingTranscriptionModel
+    }
+
+    /// The model managed onboarding practices with: the target model once it can run, otherwise a local model
+    /// already downloaded on this Mac. Nil while neither exists, and onboarding then waits on the model step,
+    /// which shows the download progress.
+    var managedOnboardingTranscriptionModel: (any TranscriptionModel)? {
+        guard isManagedSetup else { return nil }
+        if let target = managedTargetTranscriptionModel, usableTranscriptionModelKeys.contains(target.selectionKey) {
+            return target
+        }
+        return TranscriptionModelRegistry.models.first {
+            ManagedModelDownload(transcriptionModel: $0) != nil && usableTranscriptionModelKeys.contains($0.selectionKey)
+        }
     }
 
     var skipsAPISetup: Bool {
@@ -343,7 +378,12 @@ final class OnboardingCoordinator: ObservableObject {
     }
 
     var stageAfterMicrophone: OnboardingStage {
-        isManagedSetup ? .experience : .model
+        isManagedSetup && managedOnboardingTranscriptionModel != nil ? .experience : .model
+    }
+
+    /// Where the model step's Continue button goes.
+    var stageAfterModel: OnboardingStage {
+        isManagedSetup ? .experience : .api
     }
 
     var stageBeforeExperience: OnboardingStage {
@@ -374,15 +414,15 @@ final class OnboardingCoordinator: ObservableObject {
 
     private var contextAwarenessStepNumber: Int {
         guard let insertionIndex = contextAwarenessInsertionIndices.first else {
-            return OnboardingStage.baseStepCount + activeExperienceSteps.count + 1
+            return setupStepCount + activeExperienceSteps.count + 1
         }
 
-        return OnboardingStage.baseStepCount + insertionIndex + 1
+        return setupStepCount + insertionIndex + 1
     }
 
     private func experienceStepNumber(for index: Int) -> Int {
         let priorContextScreens = contextAwarenessInsertionIndices.filter { $0 <= index }.count
-        return OnboardingStage.baseStepCount + index + priorContextScreens + 1
+        return setupStepCount + index + priorContextScreens + 1
     }
 
     var selectedOnboardingProvider: AIProvider {
@@ -399,7 +439,16 @@ final class OnboardingCoordinator: ObservableObject {
         return onboardingProviderOptions.first ?? .groq
     }
 
+    /// The local model the model step offers. In managed setup that is the organization's Parakeet model, so the
+    /// step shows the progress of the download VoiceInk already started.
     var requiredTranscriptionModel: FluidAudioModel? {
+        if isManagedSetup, let managedModel = managedDefaultsResolution.transcriptionModel as? FluidAudioModel {
+            return managedModel
+        }
+        return defaultOnboardingTranscriptionModel
+    }
+
+    private var defaultOnboardingTranscriptionModel: FluidAudioModel? {
         TranscriptionModelRegistry.models
             .compactMap { $0 as? FluidAudioModel }
             .first { $0.name == "parakeet-tdt-0.6b-v3" }
@@ -437,8 +486,8 @@ final class OnboardingCoordinator: ObservableObject {
     }
 
     func isTranscriptionSetupReady(isTranscriptionModelDownloaded: Bool) -> Bool {
-        // The organization chose the model, and VoiceInk downloads it in the background.
-        if isManagedSetup { return true }
+        // The practice steps need a model that can run now: the organization's, or one already downloaded.
+        if isManagedSetup { return managedOnboardingTranscriptionModel != nil }
 
         switch transcriptionSetupKind {
         case .local:

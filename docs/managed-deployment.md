@@ -141,11 +141,13 @@ These keys set starting choices that users can change later. They are separate f
 - **After onboarding.** On a new install, VoiceInk applies the choices when the user finishes onboarding. The choices go into the default mode and the global model setting. Other modes keep their own settings.
 - **Downloads.** VoiceInk starts each missing model in `AutoDownloadModels` in the background when it launches, and the user sees its progress in the model library. A download that fails starts again at the next launch. `AutoDownloadModels` is the only key that downloads anything, so list the default models there too.
 - **Waiting for a download.** If the default transcription model hasn't been downloaded yet, VoiceInk keeps the current model and switches when the download finishes. It doesn't switch if the user chose another model in the meantime.
-- **Onboarding.** When `DefaultTranscriptionModel`, `DefaultEnhancementProvider`, `DefaultEnhancementEnabled`, or `AutoDownloadModels` is set, onboarding skips choosing a model and entering an API key. The permission steps stay.
-- **Cloud services.** When `DisableCloudServices` is `true`, VoiceInk ignores a cloud model or cloud provider in these keys and writes a log message. Local choices still apply.
+- **Onboarding.** When `DefaultTranscriptionModel`, `DefaultEnhancementProvider`, `DefaultEnhancementEnabled`, or `AutoDownloadModels` is set, onboarding skips entering an API key. It skips choosing a model too when the default transcription model, or another local model, is already downloaded. Otherwise it waits on the model step, which shows the download progress, and continues to the practice steps when the download finishes. The permission and microphone steps stay, and the progress indicator counts only the steps shown.
+- **Cloud services.** When `DisableCloudServices` is `true`, VoiceInk ignores a cloud model or cloud provider in these keys and writes a log message. Local choices still apply. If `DefaultEnhancementEnabled` is `true` and the provider is ignored, VoiceInk leaves enhancement as it was.
 - **No keys.** When none of these keys are set, VoiceInk behaves as it does without a profile.
 
-VoiceInk Refine needs a Mac with Apple silicon and 16 GB of memory, and its download is about 1.1 GB.
+### VoiceInk Refine on smaller Macs
+
+VoiceInk Refine needs a Mac with Apple silicon and at least 16 GB of memory, and its download is about 1.1 GB. On an Intel Mac or a Mac with less memory, VoiceInk ignores VoiceInk Refine in `DefaultEnhancementProvider` and `AutoDownloadModels`, so it doesn't download the model or select it. It also ignores `DefaultEnhancementEnabled` set to `true`, so enhancement stays off unless the user turns it on. VoiceInk writes a log message for each ignored key that says why. The transcription default still applies. The same profile can go to every Mac; you don't need a separate profile for smaller Macs.
 
 ### Sample settings
 

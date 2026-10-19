@@ -20,6 +20,7 @@ final class TestIsolationTests: XCTestCase {
     func testCredentialsStayInMemory() {
         let keychain = KeychainService.shared
         XCTAssertTrue(keychain.usesMemoryStore)
+        XCTAssertEqual(keychain.service, "com.prakashjoshipax.VoiceInk.Tests")
 
         let key = "TestIsolation_\(UUID().uuidString)"
         XCTAssertFalse(keychain.exists(forKey: key))

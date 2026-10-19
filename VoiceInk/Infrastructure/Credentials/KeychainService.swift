@@ -24,12 +24,18 @@ final class KeychainService {
     }
 
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "KeychainService")
+    // Under XCTest the memory store below keeps every call off the Keychain. The separate service name is a second
+    // guard: anything a test still writes can never land in, or be read from, the app's real items.
     #if LOCAL_BUILD
-        private let service = "com.prakashjoshipax.VoiceInk.Local"
+        let service =
+            ProcessInfo.processInfo.isRunningUnitTests
+            ? "com.prakashjoshipax.VoiceInk.Tests" : "com.prakashjoshipax.VoiceInk.Local"
         private let defaults = UserDefaults.standard
         private let legacyLocalPrefix = "LocalKeychain_"
     #else
-        private let service = "com.prakashjoshipax.VoiceInk"
+        let service =
+            ProcessInfo.processInfo.isRunningUnitTests
+            ? "com.prakashjoshipax.VoiceInk.Tests" : "com.prakashjoshipax.VoiceInk"
     #endif
 
     /// Holds credentials in memory instead of the Keychain. A unit test run always uses one, so tests never read

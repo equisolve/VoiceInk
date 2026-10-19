@@ -9,6 +9,8 @@ protocol ManagedDefaultsTarget: AnyObject {
     var currentTranscriptionSelectionKey: String? { get }
     /// False until onboarding has finished and set up the starter modes that the defaults are written into.
     var canApplySettings: Bool { get }
+    /// Why VoiceInk Refine can't run on this Mac, or nil when it can.
+    var voiceInkRefineUnavailableReason: String? { get }
 
     func isDownloaded(_ download: ManagedModelDownload) -> Bool
     func isDownloading(_ download: ManagedModelDownload) -> Bool
@@ -80,13 +82,18 @@ final class ManagedDefaultsApplier: NSObject {
         }
     }
 
-    func apply() {
-        let managed = ManagedDefaults(defaults: defaults)
-        let resolution = ManagedDefaultsResolution(
+    private func resolve(_ managed: ManagedDefaults) -> ManagedDefaultsResolution {
+        ManagedDefaultsResolution(
             managed,
             transcriptionModels: target.transcriptionModels,
-            isCloudAllowed: isCloudAllowed()
+            isCloudAllowed: isCloudAllowed(),
+            voiceInkRefineUnavailableReason: target.voiceInkRefineUnavailableReason
         )
+    }
+
+    func apply() {
+        let managed = ManagedDefaults(defaults: defaults)
+        let resolution = resolve(managed)
 
         for reason in resolution.ignored {
             logger.warning("Ignored managed default: \(reason, privacy: .public)")
@@ -136,11 +143,7 @@ final class ManagedDefaultsApplier: NSObject {
     func switchToPendingTranscriptionModel() {
         guard let pending = defaults.string(forKey: ManagedDefaults.pendingTranscriptionModelKey) else { return }
 
-        let resolution = ManagedDefaultsResolution(
-            ManagedDefaults(defaults: defaults),
-            transcriptionModels: target.transcriptionModels,
-            isCloudAllowed: isCloudAllowed()
-        )
+        let resolution = resolve(ManagedDefaults(defaults: defaults))
         guard let model = resolution.transcriptionModel, model.selectionKey == pending,
             target.currentTranscriptionSelectionKey == defaults.string(forKey: ManagedDefaults.pendingReplacedModelKey)
         else {
@@ -198,6 +201,8 @@ final class LiveManagedDefaultsTarget: ManagedDefaultsTarget {
     var canApplySettings: Bool {
         UserDefaults.standard.bool(forKey: OnboardingSettings.completedV2Key)
     }
+
+    var voiceInkRefineUnavailableReason: String? { voiceInkRefineService.unavailableDescription }
 
     func isDownloaded(_ download: ManagedModelDownload) -> Bool {
         switch download {
