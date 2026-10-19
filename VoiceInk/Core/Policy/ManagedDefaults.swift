@@ -106,11 +106,13 @@ struct ManagedDefaultsResolution {
 
     /// - Parameter voiceInkRefineUnavailableReason: Why VoiceInk Refine can't run on this Mac, or nil when it can.
     ///   Comes from `VoiceInkRefineService.unavailableDescription` (Apple silicon with at least 16 GB of memory).
+    /// - Parameter managedEndpoint: The organization AI endpoint, which `DefaultEnhancementProvider` can name.
     init(
         _ managed: ManagedDefaults,
         transcriptionModels: [any TranscriptionModel],
         isCloudAllowed: Bool,
-        voiceInkRefineUnavailableReason: String?
+        voiceInkRefineUnavailableReason: String?,
+        managedEndpoint: ManagedAIEndpoint? = ManagedAIEndpoint.current
     ) {
         if let id = managed.transcriptionModel {
             if let model = TranscriptionModelRegistry.model(forSelectionKey: id, in: transcriptionModels) {
@@ -125,8 +127,14 @@ struct ManagedDefaultsResolution {
         }
 
         if let name = managed.enhancementProvider {
-            if let provider = Self.enhancementProvider(named: name) {
-                if !CloudPolicy.isEnhancementProviderAllowed(provider, cloudAllowed: isCloudAllowed) {
+            if let provider = Self.enhancementProvider(named: name, managedEndpoint: managedEndpoint) {
+                if provider == .managed {
+                    resolveManagedProvider(
+                        named: name, endpoint: managedEndpoint, isCloudAllowed: isCloudAllowed,
+                        voiceInkRefineUnavailableReason: voiceInkRefineUnavailableReason)
+                } else if !CloudPolicy.isEnhancementProviderAllowed(
+                    provider, cloudAllowed: isCloudAllowed, managedEndpoint: managedEndpoint)
+                {
                     ignored.append("\(ManagedDefaults.enhancementProviderKey) \(name) is blocked while cloud services are off")
                 } else if provider == .voiceInkRefine, let reason = voiceInkRefineUnavailableReason {
                     ignored.append("\(ManagedDefaults.enhancementProviderKey) \(name) can't run on this Mac: \(reason)")
@@ -174,9 +182,45 @@ struct ManagedDefaultsResolution {
         if !downloads.contains(download) { downloads.append(download) }
     }
 
-    static func enhancementProvider(named name: String) -> AIProvider? {
-        AIProvider.allCases.first {
+    /// The organization provider matches `Managed` or its `ManagedAIProviderName`.
+    static func enhancementProvider(
+        named name: String,
+        managedEndpoint: ManagedAIEndpoint? = ManagedAIEndpoint.current
+    ) -> AIProvider? {
+        if let managedEndpoint, managedEndpoint.providerName.caseInsensitiveCompare(name) == .orderedSame {
+            return .managed
+        }
+        return AIProvider.allCases.first {
             $0.supportsEnhancement && $0.rawValue.caseInsensitiveCompare(name) == .orderedSame
+        }
+    }
+
+    /// Selects the organization provider when its endpoint is set up and allowed. Otherwise falls back to
+    /// VoiceInk Refine when it can run on this Mac, so enhancement still has a local default.
+    private mutating func resolveManagedProvider(
+        named name: String,
+        endpoint: ManagedAIEndpoint?,
+        isCloudAllowed: Bool,
+        voiceInkRefineUnavailableReason: String?
+    ) {
+        if let endpoint,
+            CloudPolicy.isEnhancementProviderAllowed(.managed, cloudAllowed: isCloudAllowed, managedEndpoint: endpoint)
+        {
+            enhancementProvider = .managed
+            enhancementModel = endpoint.model
+            return
+        }
+
+        let reason =
+            endpoint == nil
+            ? "\(ManagedAIEndpoint.endpointURLKey) and \(ManagedAIEndpoint.modelKey) aren't both set"
+            : "its endpoint must use https or a loopback host while cloud services are off"
+        if voiceInkRefineUnavailableReason == nil {
+            ignored.append("\(ManagedDefaults.enhancementProviderKey) \(name) is unavailable because \(reason); using VoiceInk Refine")
+            enhancementProvider = .voiceInkRefine
+            enhancementModel = AIProvider.voiceInkRefine.defaultModel
+        } else {
+            ignored.append("\(ManagedDefaults.enhancementProviderKey) \(name) is unavailable because \(reason)")
         }
     }
 }

@@ -286,6 +286,74 @@ final class ManagedDefaultsTests: XCTestCase {
         XCTAssertEqual(resolution.ignored, [])
     }
 
+    // MARK: - Organization AI endpoint
+
+    private func setManagedEndpoint(_ url: String = "https://ai.example.com/v1", name: String? = nil) {
+        defaults.set(url, forKey: ManagedAIEndpoint.endpointURLKey)
+        defaults.set("voiceink-cleanup", forKey: ManagedAIEndpoint.modelKey)
+        defaults.set(name, forKey: ManagedAIEndpoint.providerNameKey)
+    }
+
+    func testManagedProviderBecomesTheDefaultWhenItsEndpointIsSet() {
+        cloudAllowed = false
+        setManagedEndpoint()
+        setProfile(provider: "Managed", model: "ignored-model", enabled: true, version: 1)
+
+        makeApplier().apply()
+
+        XCTAssertEqual(target.enhancements.count, 1)
+        XCTAssertEqual(target.enhancements.first?.provider, .managed)
+        XCTAssertEqual(target.enhancements.first?.model, "voiceink-cleanup", "The organization sets the managed model")
+        XCTAssertEqual(target.enhancements.first?.enabled, true)
+    }
+
+    func testManagedProviderMatchesItsDisplayName() {
+        setManagedEndpoint(name: "Example AI")
+        setProfile(provider: "example ai", enabled: true, version: 1)
+
+        makeApplier().apply()
+
+        XCTAssertEqual(target.enhancements.first?.provider, .managed)
+    }
+
+    func testManagedProviderFallsBackToRefineWithoutAnEndpoint() {
+        cloudAllowed = false
+        setProfile(provider: "Managed", enabled: true, version: 1)
+
+        let resolution = ManagedDefaultsResolution(
+            ManagedDefaults(defaults: defaults), transcriptionModels: target.transcriptionModels, isCloudAllowed: false,
+            voiceInkRefineUnavailableReason: nil, managedEndpoint: nil)
+        XCTAssertEqual(resolution.enhancementProvider, .voiceInkRefine)
+        XCTAssertEqual(resolution.enhancementModel, VoiceInkRefineService.modelName)
+        XCTAssertEqual(resolution.enhancementEnabled, true)
+        XCTAssertEqual(resolution.ignored.count, 1, "\(resolution.ignored)")
+
+        makeApplier().apply()
+        XCTAssertEqual(target.enhancements.first?.provider, .voiceInkRefine)
+    }
+
+    func testManagedProviderOverPlainHTTPFallsBackWhileCloudIsOff() {
+        cloudAllowed = false
+        setManagedEndpoint("http://ai.example.com/v1")
+        target.voiceInkRefineUnavailableReason = "Requires at least 16 GB of memory."
+        setProfile(provider: "Managed", enabled: true, version: 1)
+
+        makeApplier().apply()
+
+        XCTAssertEqual(target.enhancements.count, 0, "No usable provider, so enhancement isn't turned on")
+        XCTAssertEqual(defaults.integer(forKey: ManagedDefaults.appliedVersionKey), 1)
+    }
+
+    func testRefineStaysAValidDefaultNextToAManagedEndpoint() {
+        cloudAllowed = false
+        setManagedEndpoint()
+        setProfile(provider: "VoiceInk Refine", enabled: true, version: 1)
+
+        makeApplier().apply()
+
+        XCTAssertEqual(target.enhancements.first?.provider, .voiceInkRefine)
+    }
+
     // MARK: - Downloads
 
     func testAutoDownloadListResolution() {

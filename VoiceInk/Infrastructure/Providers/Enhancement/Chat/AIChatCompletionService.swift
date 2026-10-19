@@ -91,14 +91,13 @@ extension AIService {
             guard let managedEndpoint else {
                 throw EnhancementError.notConfigured
             }
-            // The token is read from preferences for this request only and isn't stored or logged.
-            result = try await OpenAILLMClient.chatCompletion(
-                baseURL: managedEndpoint.chatCompletionsURL,
-                apiKey: ManagedAIEndpoint.token(),
-                model: managedEndpoint.model,
+            // The token is read from preferences for this request only and isn't stored or logged. The client sends
+            // no temperature and follows redirects only within the endpoint.
+            result = try await ManagedAIClient.chatCompletion(
+                endpoint: managedEndpoint,
+                token: ManagedAIEndpoint.token(),
                 messages: messages,
                 systemPrompt: systemPrompt,
-                temperature: 0.3,
                 timeout: timeout
             )
         case .voiceInkRefine:

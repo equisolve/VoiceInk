@@ -87,7 +87,8 @@ final class ManagedDefaultsApplier: NSObject {
             managed,
             transcriptionModels: target.transcriptionModels,
             isCloudAllowed: isCloudAllowed(),
-            voiceInkRefineUnavailableReason: target.voiceInkRefineUnavailableReason
+            voiceInkRefineUnavailableReason: target.voiceInkRefineUnavailableReason,
+            managedEndpoint: ManagedAIEndpoint.current(in: defaults)
         )
     }
 

@@ -124,6 +124,20 @@ enum CloudPolicy {
         return candidateSegments.starts(with: managedSegments)
     }
 
+    /// True when the URL has the managed endpoint's scheme, host, and port, and no user info. The managed provider
+    /// follows a redirect only to such a URL, so the token can't be forwarded to another server.
+    static func hasManagedEndpointOrigin(_ url: URL, managedEndpoint: ManagedAIEndpoint) -> Bool {
+        guard let candidate = URLComponents(url: url, resolvingAgainstBaseURL: true),
+            let managed = URLComponents(url: managedEndpoint.baseURL, resolvingAgainstBaseURL: false),
+            let scheme = candidate.scheme?.lowercased(), scheme == managed.scheme?.lowercased(),
+            let host = candidate.host?.lowercased(), !host.isEmpty, host == managed.host?.lowercased(),
+            candidate.user == nil, candidate.password == nil
+        else {
+            return false
+        }
+        return effectivePort(candidate) == effectivePort(managed)
+    }
+
     private static func effectivePort(_ components: URLComponents) -> Int? {
         if let port = components.port { return port }
         switch components.scheme?.lowercased() {

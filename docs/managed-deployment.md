@@ -48,8 +48,28 @@ When `ManagedAIEndpointURL` and `ManagedAIModel` are both set:
 
 - The **Cloud** tab in **AI Models** shows the provider, model, and endpoint as read-only, labeled **Managed by your organization** when the values come from a configuration profile. The token itself isn't shown.
 - The provider is first in the AI provider lists and becomes the selected provider when it first appears or when its URL or model changes. Users can pick another allowed provider afterward.
-- VoiceInk reads the token for each request. It doesn't copy the token to the Keychain, logs, or history.
+- VoiceInk reads the token for each request. It doesn't copy the token to the Keychain, logs, or history. Without a token, VoiceInk sends no `Authorization` header.
 - Changes to these keys apply while the app runs.
+- To make the provider the default for enhancement, set `DefaultEnhancementProvider` to `Managed`, as described in [Set default models](#set-default-models).
+
+Each request is a `POST` to `chat/completions` with the default cleanup prompt and the custom vocabulary as the system message, and the transcript as the user message, the same as other OpenAI-compatible providers. The body has only `model`, `messages`, and `stream` (`false`). VoiceInk doesn't send `temperature` or other sampling settings, because some models reject them: Claude Haiku 5.5 on Amazon Bedrock rejects a request that sets `temperature`. Set sampling options on the proxy if you need them.
+
+VoiceInk follows a redirect from the endpoint only when it keeps the endpoint's scheme, host, and port. It refuses any other redirect and reports an error, so the token isn't sent to another server. This applies whether or not `DisableCloudServices` is set.
+
+### Use LiteLLM as the endpoint
+
+A [LiteLLM proxy](https://docs.litellm.ai/docs/simple_proxy) works as the endpoint. Set `ManagedAIEndpointURL` to the proxy's URL with `/v1`, such as `https://ai.example.com/v1`, `ManagedAIModel` to a `model_name` from the proxy's `config.yaml`, and `ManagedAIToken` to a [virtual key](https://docs.litellm.ai/docs/proxy/virtual_keys) limited to that model. For example:
+
+```yaml
+model_list:
+  - model_name: voiceink-cleanup
+    litellm_params:
+      model: bedrock/us.anthropic.claude-haiku-5-5
+      aws_region_name: us-east-1
+      drop_params: true
+```
+
+`drop_params` isn't needed for VoiceInk's requests, but it keeps other clients of the same model from failing on parameters the model doesn't support.
 
 When `DisableCloudServices` is also `true`:
 
@@ -78,7 +98,7 @@ All of these keys are in the `com.prakashjoshipax.VoiceInk` domain.
 
 ## Sample configuration profile
 
-This profile sets all of the keys in the previous table. Replace the `ManagedAI` values with your endpoint, model, and token, or remove those keys if you don't run an AI endpoint. Upload it to your MDM service as a custom configuration profile, or paste the inner dictionary under `mcx_preference_settings` into a custom settings payload for the `com.prakashjoshipax.VoiceInk` domain. Replace the `PayloadUUID` values with your own (run `uuidgen`), and change `PayloadIdentifier` and `PayloadOrganization` to match your organization.
+This profile sets all of the keys in the previous table and the [default models](#set-default-models): Parakeet for transcription and the organization AI endpoint for enhancement, with VoiceInk Refine downloaded as the fallback. Auto-Learn Dictionary stays off. Replace the `ManagedAI` values with your endpoint, model, and token. If you don't run an AI endpoint, remove those keys and set `DefaultEnhancementProvider` to `VoiceInk Refine`. Upload it to your MDM service as a custom configuration profile, or paste the inner dictionary under `mcx_preference_settings` into a custom settings payload for the `com.prakashjoshipax.VoiceInk` domain. Replace the `PayloadUUID` values with your own (run `uuidgen`), and change `PayloadIdentifier` and `PayloadOrganization` to match your organization.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -112,7 +132,7 @@ This profile sets all of the keys in the previous table. Replace the `ManagedAI`
                                 <key>ManagedAIEndpointURL</key>
                                 <string>https://ai.example.com/v1</string>
                                 <key>ManagedAIModel</key>
-                                <string>MODEL_NAME</string>
+                                <string>voiceink-cleanup</string>
                                 <key>ManagedAIToken</key>
                                 <string>PROXY_ONLY_TOKEN</string>
                                 <key>ManagedAIProviderName</key>
@@ -127,6 +147,19 @@ This profile sets all of the keys in the previous table. Replace the `ManagedAI`
                                 <true/>
                                 <key>TranscriptionRetentionMinutes</key>
                                 <integer>10080</integer>
+                                <key>DefaultTranscriptionModel</key>
+                                <string>parakeet-tdt-0.6b-v3</string>
+                                <key>DefaultEnhancementProvider</key>
+                                <string>Managed</string>
+                                <key>DefaultEnhancementEnabled</key>
+                                <true/>
+                                <key>AutoDownloadModels</key>
+                                <array>
+                                    <string>parakeet-tdt-0.6b-v3</string>
+                                    <string>VoiceInk Refine V1</string>
+                                </array>
+                                <key>ManagedDefaultsVersion</key>
+                                <integer>1</integer>
                             </dict>
                         </dict>
                     </array>
@@ -167,8 +200,8 @@ These keys set starting choices that users can change later. They are separate f
 | Key | Type | Effect |
 | --- | --- | --- |
 | `DefaultTranscriptionModel` | String | The transcription model to select, by model ID. For example, `parakeet-tdt-0.6b-v3`. |
-| `DefaultEnhancementProvider` | String | The AI enhancement provider to select, by name. For example, `VoiceInk Refine` or `Ollama`. |
-| `DefaultEnhancementModel` | String | Optional. The model to select for that provider. VoiceInk Refine has one model, so VoiceInk ignores this key for it. |
+| `DefaultEnhancementProvider` | String | The AI enhancement provider to select, by name. For example, `VoiceInk Refine`, `Ollama`, or `Managed` for the [organization AI endpoint](#provide-an-organization-ai-endpoint). The endpoint's `ManagedAIProviderName` works too. |
+| `DefaultEnhancementModel` | String | Optional. The model to select for that provider. VoiceInk ignores this key for VoiceInk Refine, which has one model, and for the organization endpoint, which uses `ManagedAIModel`. |
 | `DefaultEnhancementEnabled` | Boolean | `true` turns on AI enhancement, and `false` turns it off. |
 | `AutoDownloadModels` | Array of strings | Local models to download in the background. Use transcription model IDs, and `VoiceInk Refine V1` for VoiceInk Refine. |
 | `ManagedDefaultsVersion` | Integer | Required to apply the choices. VoiceInk applies the choices once for each version. |
@@ -181,6 +214,7 @@ These keys set starting choices that users can change later. They are separate f
 - **Waiting for a download.** If the default transcription model hasn't been downloaded yet, VoiceInk keeps the current model and switches when the download finishes. It doesn't switch if the user chose another model in the meantime.
 - **Onboarding.** When `DefaultTranscriptionModel`, `DefaultEnhancementProvider`, `DefaultEnhancementEnabled`, or `AutoDownloadModels` is set, onboarding skips entering an API key. It skips choosing a model too when the default transcription model, or another local model, is already downloaded. Otherwise it waits on the model step and continues to the practice steps when the download finishes. That step shows the default transcription model and its download progress, for any local model type; the user can start the download there if `AutoDownloadModels` doesn't list it. When the profile sets no local transcription model, the step offers Parakeet V3 instead. The permission and microphone steps stay, and the progress indicator counts only the steps shown.
 - **Cloud services.** When `DisableCloudServices` is `true`, VoiceInk ignores a cloud model or cloud provider in these keys and writes a log message. Local choices still apply. If `DefaultEnhancementEnabled` is `true` and the provider is ignored, VoiceInk leaves enhancement as it was. VoiceInk still records the version as applied, so the ignored choices don't apply later on their own. If you remove `DisableCloudServices` and want them applied, raise `ManagedDefaultsVersion` too.
+- **Organization endpoint.** When `DefaultEnhancementProvider` is `Managed`, VoiceInk selects the organization provider if `ManagedAIEndpointURL` and `ManagedAIModel` are set and the endpoint is allowed (with `DisableCloudServices` on, it must use `https` or a loopback host). VoiceInk doesn't check that the endpoint answers. Otherwise it selects VoiceInk Refine if the Mac can run it, writes a log message, and still applies `DefaultEnhancementEnabled`. On a Mac that can't run VoiceInk Refine either, VoiceInk ignores both keys.
 - **No keys.** When none of these keys are set, VoiceInk behaves as it does without a profile.
 
 ### VoiceInk Refine on smaller Macs
@@ -189,23 +223,7 @@ VoiceInk Refine needs a Mac with Apple silicon and at least 16 GB of memory, and
 
 ### Sample settings
 
-These keys select Parakeet for transcription and turn on VoiceInk Refine for enhancement. Add them to the `mcx_preference_settings` dictionary in the sample profile.
-
-```xml
-<key>DefaultTranscriptionModel</key>
-<string>parakeet-tdt-0.6b-v3</string>
-<key>DefaultEnhancementProvider</key>
-<string>VoiceInk Refine</string>
-<key>DefaultEnhancementEnabled</key>
-<true/>
-<key>AutoDownloadModels</key>
-<array>
-    <string>parakeet-tdt-0.6b-v3</string>
-    <string>VoiceInk Refine V1</string>
-</array>
-<key>ManagedDefaultsVersion</key>
-<integer>1</integer>
-```
+The [sample profile](#sample-configuration-profile) sets these keys. It selects Parakeet for transcription and the organization AI endpoint for enhancement, and downloads VoiceInk Refine as the fallback for when the endpoint isn't set up or allowed. To use VoiceInk Refine alone, set `DefaultEnhancementProvider` to `VoiceInk Refine`.
 
 The Parakeet model IDs are `parakeet-tdt-0.6b-v2` (English only) and `parakeet-tdt-0.6b-v3` (English and 25 European languages).
 
