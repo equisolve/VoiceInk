@@ -49,6 +49,9 @@ struct VoiceInkApp: App {
     // Transcription auto-cleanup service for zero data retention
     private let transcriptionAutoCleanupService = TranscriptionAutoCleanupService.shared
 
+    // Applies defaults and model downloads from an organization's configuration profile
+    private let managedDefaultsApplier: ManagedDefaultsApplier
+
     // Model prewarm service for optimizing model on wake from sleep
     @StateObject private var prewarmService: ModelPrewarmService
 
@@ -165,6 +168,16 @@ struct VoiceInkApp: App {
         transcriptionModelManager.refreshAllAvailableModels()
         transcriptionModelManager.loadCurrentTranscriptionModel()
         CloudPolicyMonitor.shared.start()
+
+        managedDefaultsApplier = ManagedDefaultsApplier(
+            target: LiveManagedDefaultsTarget(
+                transcriptionModelManager: transcriptionModelManager,
+                whisperModelManager: whisperModelManager,
+                fluidAudioModelManager: fluidAudioModelManager,
+                aiService: aiService
+            )
+        )
+        managedDefaultsApplier.start()
 
         _whisperModelManager = State(initialValue: whisperModelManager)
         _fluidAudioModelManager = State(initialValue: fluidAudioModelManager)

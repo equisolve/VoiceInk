@@ -212,6 +212,8 @@ class TranscriptionModelManager: ObservableObject {
         } else {
             currentTranscriptionModel = nil
         }
+
+        NotificationCenter.default.post(name: .transcriptionModelsDidChange, object: nil)
     }
 
     func refreshOpenRouterCatalog() async {

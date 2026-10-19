@@ -46,7 +46,9 @@ struct OnboardingView: View {
                     OnboardingMicrophoneScreen(
                         contentMaxWidth: contentMaxWidth,
                         onBack: coordinator.flow.goToPermissionsStep,
-                        onContinue: coordinator.flow.goToModelStep
+                        onContinue: {
+                            coordinator.flow.continueFromMicrophoneStep(enhancementService: enhancementService)
+                        }
                     )
                     .transition(.opacity)
                 case .model:

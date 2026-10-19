@@ -24,6 +24,15 @@ final class OnboardingFlowController {
         coordinator.storedStage = OnboardingStage.model.rawValue
     }
 
+    func continueFromMicrophoneStep(enhancementService: AIEnhancementService) {
+        guard coordinator.stageAfterMicrophone == .experience else {
+            goToModelStep()
+            return
+        }
+
+        goToExperienceStep(isTranscriptionSetupReady: true, enhancementService: enhancementService)
+    }
+
     func goToAPIStep(
         isTranscriptionSetupReady: Bool,
         aiService: AIService
@@ -128,7 +137,7 @@ final class OnboardingFlowController {
                 enhancementService: enhancementService
             )
         } else {
-            coordinator.storedStage = OnboardingStage.api.rawValue
+            coordinator.storedStage = coordinator.stageBeforeExperience.rawValue
         }
     }
 
@@ -258,6 +267,11 @@ final class OnboardingFlowController {
             goToPermissionsStep()
         }
 
+        // A profile with managed defaults can arrive while the model or API key screen is showing.
+        if (coordinator.stage == .model || coordinator.stage == .api) && coordinator.isManagedSetup {
+            goToFirstIncompleteSetupStep(isTranscriptionSetupReady: isTranscriptionSetupReady)
+        }
+
         if coordinator.stage == .model
             && (!coordinator.requiredPermissionsGranted || !coordinator.hasSelectedOnboardingMicrophone)
         {
@@ -300,7 +314,8 @@ final class OnboardingFlowController {
         } else if !isTranscriptionSetupReady {
             coordinator.storedStage = OnboardingStage.model.rawValue
         } else {
-            coordinator.storedStage = OnboardingStage.api.rawValue
+            coordinator.storedStage = coordinator.isManagedSetup
+                ? OnboardingStage.experience.rawValue : OnboardingStage.api.rawValue
         }
     }
 

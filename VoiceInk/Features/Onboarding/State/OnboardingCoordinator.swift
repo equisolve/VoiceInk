@@ -289,6 +289,10 @@ final class OnboardingCoordinator: ObservableObject {
     }
 
     var selectedOnboardingTranscriptionModel: (any TranscriptionModel)? {
+        if let managedModel = managedDefaultsResolution.transcriptionModel {
+            return managedModel
+        }
+
         switch transcriptionSetupKind {
         case .local:
             return requiredTranscriptionModel
@@ -318,8 +322,36 @@ final class OnboardingCoordinator: ObservableObject {
         }
     }
 
+    // MARK: - Managed setup
+
+    /// True when the organization's profile sets up transcription or enhancement. Onboarding then skips choosing
+    /// a transcription model and entering an API key, and keeps the permission and microphone steps.
+    var isManagedSetup: Bool {
+        ManagedDefaults(defaults: defaults).isPresent
+    }
+
+    var managedDefaultsResolution: ManagedDefaultsResolution {
+        ManagedDefaultsResolution(
+            ManagedDefaults(defaults: defaults),
+            transcriptionModels: TranscriptionModelRegistry.models,
+            isCloudAllowed: CloudPolicy.isCloudAllowed(in: defaults)
+        )
+    }
+
+    var skipsAPISetup: Bool {
+        hasSkippedAPISetup || isManagedSetup
+    }
+
+    var stageAfterMicrophone: OnboardingStage {
+        isManagedSetup ? .experience : .model
+    }
+
+    var stageBeforeExperience: OnboardingStage {
+        isManagedSetup ? .microphone : .api
+    }
+
     var activeExperienceSteps: [OnboardingExperienceStep] {
-        if hasSkippedAPISetup && !isSelectedAPIProviderVerified {
+        if skipsAPISetup && !isSelectedAPIProviderVerified {
             return OnboardingExperienceCatalog.steps.filter { !$0.requiresVerifiedAPIProvider }
         }
 
@@ -405,6 +437,9 @@ final class OnboardingCoordinator: ObservableObject {
     }
 
     func isTranscriptionSetupReady(isTranscriptionModelDownloaded: Bool) -> Bool {
+        // The organization chose the model, and VoiceInk downloads it in the background.
+        if isManagedSetup { return true }
+
         switch transcriptionSetupKind {
         case .local:
             return isTranscriptionModelDownloaded
@@ -416,7 +451,7 @@ final class OnboardingCoordinator: ObservableObject {
 
     func isReadyForExperience(isTranscriptionSetupReady: Bool) -> Bool {
         requiredPermissionsGranted && hasSelectedOnboardingMicrophone && isTranscriptionSetupReady
-            && (isSelectedAPIProviderVerified || hasSkippedAPISetup)
+            && (isSelectedAPIProviderVerified || skipsAPISetup)
     }
 
     func isCurrentExperienceReady(isTranscriptionSetupReady: Bool) -> Bool {
