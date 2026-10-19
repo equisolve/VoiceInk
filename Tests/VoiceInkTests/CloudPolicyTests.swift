@@ -350,9 +350,14 @@ final class CloudPolicyTests: XCTestCase {
         XCTAssertTrue(verification.isValid)
     }
 
-    /// Adds a custom provider for one test and removes it, with its Keychain entry, afterward.
+    /// Adds a custom provider for one test and removes it, with its API key, afterward. The key goes to the
+    /// in-memory credential store that unit tests use, never the login Keychain.
     @MainActor
     private func withCustomProvider(baseURL: String, _ body: (String) async throws -> Void) async rethrows {
+        guard KeychainService.shared.usesMemoryStore else {
+            XCTFail("The test host must store credentials in memory")
+            return
+        }
         let manager = CustomAIProviderManager.shared
         let model = "policy-test-\(UUID().uuidString)"
         let provider = CustomAIProviderConfig(name: model, baseURL: baseURL, models: [model], selectedModel: model)

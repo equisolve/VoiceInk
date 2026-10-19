@@ -6,6 +6,20 @@ import SwiftData
 import SwiftUI
 
 @main
+enum VoiceInkLauncher {
+    static func main() {
+        guard ProcessInfo.processInfo.isRunningUnitTests else {
+            VoiceInkApp.main()
+            return
+        }
+
+        // Unit tests need a running app to host them, not VoiceInk's windows, menu bar item, or launch work.
+        AppDefaults.registerDefaults()
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        NSApplication.shared.run()
+    }
+}
+
 struct VoiceInkApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     let container: ModelContainer
