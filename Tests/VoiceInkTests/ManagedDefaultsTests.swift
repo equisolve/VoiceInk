@@ -316,6 +316,27 @@ final class ManagedDefaultsTests: XCTestCase {
         XCTAssertEqual(target.enhancements.first?.provider, .managed)
     }
 
+    func testManagedProviderNameCantTakeOverABuiltInProvider() {
+        let endpoint = ManagedAIEndpoint(
+            baseURL: URL(string: "https://ai.example.com/v1")!, model: "voiceink-cleanup", providerName: "OpenAI")
+
+        XCTAssertEqual(ManagedDefaultsResolution.enhancementProvider(named: "OpenAI", managedEndpoint: endpoint), .openAI)
+        XCTAssertEqual(ManagedDefaultsResolution.enhancementProvider(named: "openai", managedEndpoint: endpoint), .openAI)
+        XCTAssertEqual(ManagedDefaultsResolution.enhancementProvider(named: "Managed", managedEndpoint: endpoint), .managed)
+        XCTAssertNil(
+            ManagedDefaultsResolution.enhancementProvider(
+                named: "Deepgram",
+                managedEndpoint: ManagedAIEndpoint(
+                    baseURL: endpoint.baseURL, model: endpoint.model, providerName: "Deepgram")),
+            "A transcription-only provider's name doesn't become the managed provider either"
+        )
+
+        setManagedEndpoint(name: "OpenAI")
+        setProfile(provider: "OpenAI", enabled: true, version: 1)
+        makeApplier().apply()
+        XCTAssertEqual(target.enhancements.first?.provider, .openAI)
+    }
+
     func testManagedProviderFallsBackToRefineWithoutAnEndpoint() {
         cloudAllowed = false
         setProfile(provider: "Managed", enabled: true, version: 1)
@@ -607,27 +628,19 @@ final class ManagedDefaultsTests: XCTestCase {
 /// in the test host's own settings domain and restores every key it touches.
 @MainActor
 final class LiveManagedDefaultsTargetTests: XCTestCase {
-    private let touchedKeys = [
-        "modeConfigurationsV2", "activeConfigurationId", "CurrentTranscriptionModel", "SelectedLanguage",
-        "selectedAIProvider", "VoiceInk RefineSelectedModel",
-    ]
-    private var savedValues: [String: Any] = [:]
+    private let preferences = TestPreferences.defaults
     private var savedConfigurations: [ModeConfig] = []
     private var modelsDirectory: URL!
 
     override func setUp() async throws {
-        for key in touchedKeys {
-            savedValues[key] = UserDefaults.standard.object(forKey: key)
-        }
+        TestPreferences.reset()
         savedConfigurations = ModeManager.shared.configurations
         modelsDirectory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     }
 
     override func tearDown() async throws {
         ModeManager.shared.replaceConfigurations(savedConfigurations)
-        for key in touchedKeys {
-            UserDefaults.standard.set(savedValues[key], forKey: key)
-        }
+        TestPreferences.reset()
         try? FileManager.default.removeItem(at: modelsDirectory)
     }
 
@@ -662,8 +675,8 @@ final class LiveManagedDefaultsTargetTests: XCTestCase {
         XCTAssertEqual(mode.selectedAIModel, VoiceInkRefineService.modelName)
         XCTAssertTrue(mode.isAIEnhancementEnabled)
         XCTAssertEqual(mode.selectedPrompt, PromptTemplates.defaultPromptId.uuidString)
-        XCTAssertEqual(UserDefaults.standard.string(forKey: "CurrentTranscriptionModel"), "parakeet-tdt-0.6b-v2")
-        XCTAssertEqual(UserDefaults.standard.string(forKey: "selectedAIProvider"), "VoiceInk Refine")
+        XCTAssertEqual(preferences.string(forKey: "CurrentTranscriptionModel"), "parakeet-tdt-0.6b-v2")
+        XCTAssertEqual(preferences.string(forKey: "selectedAIProvider"), "VoiceInk Refine")
         XCTAssertEqual(target.currentTranscriptionSelectionKey, "parakeet-tdt-0.6b-v2")
 
         let untouched = try XCTUnwrap(ModeManager.shared.getConfiguration(with: other.id))

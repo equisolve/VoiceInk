@@ -182,17 +182,19 @@ struct ManagedDefaultsResolution {
         if !downloads.contains(download) { downloads.append(download) }
     }
 
-    /// The organization provider matches `Managed` or its `ManagedAIProviderName`.
+    /// The organization provider matches `Managed` or its `ManagedAIProviderName`. A built-in provider's name always
+    /// means that provider, so a `ManagedAIProviderName` such as `OpenAI` can't take it over.
     static func enhancementProvider(
         named name: String,
         managedEndpoint: ManagedAIEndpoint? = ManagedAIEndpoint.current
     ) -> AIProvider? {
+        if let builtIn = AIProvider.allCases.first(where: { $0.rawValue.caseInsensitiveCompare(name) == .orderedSame }) {
+            return builtIn.supportsEnhancement ? builtIn : nil
+        }
         if let managedEndpoint, managedEndpoint.providerName.caseInsensitiveCompare(name) == .orderedSame {
             return .managed
         }
-        return AIProvider.allCases.first {
-            $0.supportsEnhancement && $0.rawValue.caseInsensitiveCompare(name) == .orderedSame
-        }
+        return nil
     }
 
     /// Selects the organization provider when its endpoint is set up and allowed. Otherwise falls back to

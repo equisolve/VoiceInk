@@ -44,6 +44,10 @@ final class KeychainService {
 
     var usesMemoryStore: Bool { memoryStore != nil }
 
+    /// Every value saved in the in-memory store, so a test can check that a secret was never saved. Nil when the
+    /// Keychain is in use.
+    var memoryStoreValues: [Data]? { memoryStore?.allValues }
+
     private convenience init() {
         self.init(memoryStore: ProcessInfo.processInfo.isRunningUnitTests ? InMemoryCredentialStore() : nil)
     }
@@ -293,5 +297,9 @@ final class InMemoryCredentialStore: @unchecked Sendable {
 
     func set(_ data: Data?, forKey key: String) {
         lock.withLock { items[key] = data }
+    }
+
+    var allValues: [Data] {
+        lock.withLock { Array(items.values) }
     }
 }

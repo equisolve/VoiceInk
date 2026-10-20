@@ -34,7 +34,7 @@ final class ManagedDefaultsApplier: NSObject {
     private var observers: [NSObjectProtocol] = []
 
     init(
-        defaults: UserDefaults = .standard,
+        defaults: UserDefaults = AppPreferences.defaults,
         target: ManagedDefaultsTarget,
         isCloudAllowed: @escaping () -> Bool = { CloudPolicy.isCloudAllowed }
     ) {
@@ -196,7 +196,7 @@ final class LiveManagedDefaultsTarget: ManagedDefaultsTarget {
 
     var currentTranscriptionSelectionKey: String? {
         ModeManager.shared.getDefaultConfiguration()?.selectedTranscriptionModelName
-            ?? UserDefaults.standard.string(forKey: "CurrentTranscriptionModel")
+            ?? AppPreferences.defaults.string(forKey: "CurrentTranscriptionModel")
     }
 
     var canApplySettings: Bool {

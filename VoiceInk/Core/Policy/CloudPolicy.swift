@@ -14,7 +14,7 @@ enum CloudPolicy {
 
     /// False when the organization has turned cloud services off.
     static var isCloudAllowed: Bool {
-        isCloudAllowed(in: .standard)
+        isCloudAllowed(in: AppPreferences.defaults)
     }
 
     static func isCloudAllowed(in defaults: UserDefaults) -> Bool {
@@ -23,7 +23,7 @@ enum CloudPolicy {
 
     /// True when a configuration profile sets the key, so the UI can say the setting is managed.
     static var isManaged: Bool {
-        UserDefaults.standard.objectIsForced(forKey: disableCloudServicesKey)
+        AppPreferences.defaults.objectIsForced(forKey: disableCloudServicesKey)
     }
 
     // MARK: - Transcription
@@ -62,9 +62,11 @@ enum CloudPolicy {
 
     // MARK: - AI enhancement
 
-    /// The on-device model always passes. Ollama and a custom endpoint pass only when their URL is on a loopback
-    /// host or inside the organization's managed AI endpoint. When `ollamaBaseURL` is nil, Ollama is checked against
-    /// the saved server URL. The Local CLI provider is blocked because the command it runs can call cloud services.
+    /// The on-device model always passes, and the organization's provider passes when its endpoint is allowed. Ollama
+    /// and a custom endpoint pass only when their URL is on a loopback host, even when it points at the managed
+    /// endpoint, because only the managed provider guards the endpoint's token and redirects. When `ollamaBaseURL` is
+    /// nil, Ollama is checked against the saved server URL. The Local CLI provider is blocked because the command it
+    /// runs can call cloud services.
     static func isEnhancementProviderAllowed(
         _ provider: AIProvider,
         customBaseURL: String? = nil,
@@ -73,7 +75,7 @@ enum CloudPolicy {
         managedEndpoint: ManagedAIEndpoint? = ManagedAIEndpoint.current
     ) -> Bool {
         if provider == .managed {
-            guard let managedEndpoint else { return false }
+            guard let managedEndpoint, ManagedAIEndpoint.isValidBaseURL(managedEndpoint.baseURL) else { return false }
             return cloudAllowed || isManagedEndpointAllowed(managedEndpoint)
         }
 
@@ -83,45 +85,19 @@ enum CloudPolicy {
         case .voiceInkRefine:
             return true
         case .ollama:
-            return isAllowedEnhancementURL(ollamaBaseURL ?? AIProvider.ollama.baseURL, managedEndpoint: managedEndpoint)
+            return isLoopbackURL(ollamaBaseURL ?? AIProvider.ollama.baseURL)
         case .custom:
-            return customBaseURL.map { isAllowedEnhancementURL($0, managedEndpoint: managedEndpoint) } ?? false
+            return customBaseURL.map(isLoopbackURL) ?? false
         default:
             return false
         }
     }
 
-    /// While cloud services are off, a URL may receive text when it is on a loopback host or inside the managed endpoint.
-    static func isAllowedEnhancementURL(_ urlString: String, managedEndpoint: ManagedAIEndpoint?) -> Bool {
-        if isLoopbackURL(urlString) { return true }
-        guard let managedEndpoint, isManagedEndpointAllowed(managedEndpoint) else { return false }
-        return isWithinManagedEndpoint(urlString, managedEndpoint: managedEndpoint)
-    }
-
-    /// While cloud services are off, a managed endpoint off this Mac must use HTTPS so the token isn't sent in clear text.
+    /// While cloud services are off, a managed endpoint off this Mac must use HTTPS so the token isn't sent in clear
+    /// text. An endpoint URL with user info, a query, or a fragment is never allowed.
     static func isManagedEndpointAllowed(_ endpoint: ManagedAIEndpoint) -> Bool {
-        endpoint.baseURL.scheme?.lowercased() == "https" || isLoopbackURL(endpoint.baseURL.absoluteString)
-    }
-
-    /// True when the URL has the managed endpoint's scheme, host, and port, and its path starts with the endpoint's
-    /// path at a segment boundary. `https://ai.example.com/v1` matches `https://ai.example.com:443/v1/chat`, but not
-    /// `https://ai.example.com.evil.test/v1`, `http://ai.example.com/v1`, or `https://ai.example.com/v10`.
-    static func isWithinManagedEndpoint(_ urlString: String, managedEndpoint: ManagedAIEndpoint) -> Bool {
-        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let candidate = URLComponents(string: trimmed),
-            let managed = URLComponents(url: managedEndpoint.baseURL, resolvingAgainstBaseURL: false),
-            let scheme = candidate.scheme?.lowercased(), scheme == managed.scheme?.lowercased(),
-            let host = candidate.host?.lowercased(), !host.isEmpty, host == managed.host?.lowercased(),
-            candidate.user == nil, candidate.password == nil,
-            effectivePort(candidate) == effectivePort(managed)
-        else {
-            return false
-        }
-
-        let managedSegments = pathSegments(managed.percentEncodedPath)
-        let candidateSegments = pathSegments(candidate.percentEncodedPath)
-        guard !candidateSegments.contains(".."), !candidateSegments.contains(".") else { return false }
-        return candidateSegments.starts(with: managedSegments)
+        guard ManagedAIEndpoint.isValidBaseURL(endpoint.baseURL) else { return false }
+        return endpoint.baseURL.scheme?.lowercased() == "https" || isLoopbackURL(endpoint.baseURL.absoluteString)
     }
 
     /// True when the URL has the managed endpoint's scheme, host, and port, and no user info. The managed provider
@@ -145,10 +121,6 @@ enum CloudPolicy {
         case "http": return 80
         default: return nil
         }
-    }
-
-    private static func pathSegments(_ path: String) -> [String] {
-        path.split(separator: "/", omittingEmptySubsequences: true).map { $0.removingPercentEncoding ?? String($0) }
     }
 
     /// Throws before any text leaves the Mac when the provider, Ollama server, or custom endpoint is blocked.
@@ -200,7 +172,7 @@ final class CloudPolicyMonitor: NSObject, ObservableObject {
         isCloudAllowed = CloudPolicy.isCloudAllowed
         managedEndpoint = ManagedAIEndpoint.current
         for key in Self.observedKeys {
-            UserDefaults.standard.addObserver(self, forKeyPath: key, options: [.new], context: nil)
+            AppPreferences.defaults.addObserver(self, forKeyPath: key, options: [.new], context: nil)
         }
     }
 
@@ -248,15 +220,6 @@ enum CloudPolicyError: Error, LocalizedError, Equatable {
                 providerName
             )
         case .cloudEndpointDisabled:
-            if let endpoint = ManagedAIEndpoint.current {
-                return String(
-                    format: String(
-                        localized:
-                            "Your organization allows only endpoints on this Mac (localhost, 127.0.0.1, or ::1) and %@."
-                    ),
-                    endpoint.providerName
-                )
-            }
             return String(
                 localized: "Your organization allows only endpoints on this Mac (localhost, 127.0.0.1, or ::1)."
             )

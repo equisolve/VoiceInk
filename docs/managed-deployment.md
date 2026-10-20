@@ -16,7 +16,7 @@ When `DisableCloudServices` is `true`:
 
 - **Cloud transcription.** Every non-local transcription provider is hidden from model pickers and refused before any audio is read or sent. This includes Groq, ElevenLabs, Deepgram, Mistral, Gemini, Soniox, Speechmatics, AssemblyAI, xAI, Cartesia, OpenRouter, custom transcription endpoints, and any cloud provider added in a later release. Only Whisper, Parakeet, transcribe.cpp, and Apple Speech models are available.
 - **Modes that use a cloud transcription model.** VoiceInk uses the default transcription model if it's local and downloaded, otherwise the first downloaded local model. If no local model is downloaded, recording stops with an error that tells the user to choose a local model. Audio is never sent to a cloud service.
-- **Cloud AI enhancement.** Only VoiceInk Refine, Ollama, custom OpenAI-compatible models, and the [organization AI endpoint](#provide-an-organization-ai-endpoint) are available. Ollama and custom models are allowed only when their server URL host is `localhost`, `127.0.0.1`, or `::1`, or when the URL is inside the organization AI endpoint. VoiceInk refuses an Ollama server on another computer, including model listing and connection checks. The CLI provider is turned off, because the command it runs can reach cloud services. All other providers are hidden and refused before any text is sent.
+- **Cloud AI enhancement.** Only VoiceInk Refine, Ollama, custom OpenAI-compatible models, and the [organization AI endpoint](#provide-an-organization-ai-endpoint) are available. Ollama and custom models are allowed only when their server URL host is `localhost`, `127.0.0.1`, or `::1`, even when the URL points at the organization AI endpoint. VoiceInk refuses an Ollama server on another computer, including model listing and connection checks. The CLI provider is turned off, because the command it runs can reach cloud services. All other providers are hidden and refused before any text is sent.
 - **Modes that use a blocked AI provider.** VoiceInk uses the organization AI endpoint when one is set up. Otherwise, it pastes the transcript without AI enhancement and shows a short notice with the reason.
 - **API key entry.** The **Cloud** tab in **AI Models** shows a notice instead of the provider list, and onboarding skips the cloud provider steps. Keys already saved in the Keychain are ignored, not deleted, so they work again if the key is removed.
 - **Auto-Learn Dictionary.** Auto-Learn requests go through the same check, so they can use only the allowed AI providers.
@@ -39,15 +39,15 @@ To give users AI enhancement through a service your organization runs, set these
 
 | Key | Type | Value |
 | --- | --- | --- |
-| `ManagedAIEndpointURL` | String | The base URL of the API, such as `https://ai.example.com/v1`. VoiceInk sends requests to `chat/completions` under it. A URL that already ends in `/chat/completions` is used as is. |
+| `ManagedAIEndpointURL` | String | The base URL of the API, such as `https://ai.example.com/v1`. VoiceInk sends requests to `chat/completions` under it. A URL that already ends in `/chat/completions` is used as is. VoiceInk ignores a URL that has a user name, password, query, or fragment; put credentials in `ManagedAIToken`. |
 | `ManagedAIModel` | String | The model name to send with each request. |
 | `ManagedAIToken` | String | The token to send in an `Authorization: Bearer` header. Optional. |
-| `ManagedAIProviderName` | String | The provider name users see. Optional. The default is **Organization AI**. |
+| `ManagedAIProviderName` | String | The provider name users see. Optional. The default is **Organization AI**. Avoid the name of a built-in provider, such as `OpenAI`: `DefaultEnhancementProvider` always reads a built-in name as that provider. |
 
 When `ManagedAIEndpointURL` and `ManagedAIModel` are both set:
 
 - The **Cloud** tab in **AI Models** shows the provider, model, and endpoint as read-only, labeled **Managed by your organization** when the values come from a configuration profile. The token itself isn't shown.
-- The provider is first in the AI provider lists and becomes the selected provider when it first appears or when its URL or model changes. Users can pick another allowed provider afterward.
+- The provider is first in the AI provider lists. Setting or changing the endpoint doesn't change which provider users have selected; to select it for them, use `DefaultEnhancementProvider`.
 - VoiceInk reads the token for each request. It doesn't copy the token to the Keychain, logs, or history. Without a token, VoiceInk sends no `Authorization` header.
 - Changes to these keys apply while the app runs.
 - To make the provider the default for enhancement, set `DefaultEnhancementProvider` to `Managed`, as described in [Set default models](#set-default-models).
@@ -73,9 +73,9 @@ model_list:
 
 When `DisableCloudServices` is also `true`:
 
-- VoiceInk sends text only to loopback hosts and to URLs inside the endpoint: the same scheme, host, and port, with a path that starts with the endpoint's path. With `https://ai.example.com/v1`, VoiceInk allows `https://ai.example.com/v1/chat/completions`, but not `https://ai.example.com/v2`, `https://ai.example.com:8443/v1`, or `https://ai.example.com.example.net/v1`.
+- VoiceInk sends text only to the organization provider and to Ollama and custom models on loopback hosts. A custom model or Ollama server whose URL points at the endpoint is still refused, because only the organization provider limits where the token and redirects go.
 - The endpoint must use `https` unless its host is `localhost`, `127.0.0.1`, or `::1`. VoiceInk refuses an `http` endpoint on another host, so the token is never sent unencrypted.
-- Modes set to a blocked provider use the organization provider.
+- When the selected provider or the default mode's provider is blocked, VoiceInk switches both to the organization provider. Other modes set to a blocked provider use the organization provider when they run.
 - Transcription is unchanged. Only local transcription models are available.
 
 When `DisableCloudServices` is `false` or absent, the organization provider is added to the providers users already have, and every other provider stays available.
@@ -200,7 +200,7 @@ These keys set starting choices that users can change later. They are separate f
 | Key | Type | Effect |
 | --- | --- | --- |
 | `DefaultTranscriptionModel` | String | The transcription model to select, by model ID. For example, `parakeet-tdt-0.6b-v3`. |
-| `DefaultEnhancementProvider` | String | The AI enhancement provider to select, by name. For example, `VoiceInk Refine`, `Ollama`, or `Managed` for the [organization AI endpoint](#provide-an-organization-ai-endpoint). The endpoint's `ManagedAIProviderName` works too. |
+| `DefaultEnhancementProvider` | String | The AI enhancement provider to select, by name. For example, `VoiceInk Refine`, `Ollama`, or `Managed` for the [organization AI endpoint](#provide-an-organization-ai-endpoint). The endpoint's `ManagedAIProviderName` works too, unless it's the name of a built-in provider. |
 | `DefaultEnhancementModel` | String | Optional. The model to select for that provider. VoiceInk ignores this key for VoiceInk Refine, which has one model, and for the organization endpoint, which uses `ManagedAIModel`. |
 | `DefaultEnhancementEnabled` | Boolean | `true` turns on AI enhancement, and `false` turns it off. |
 | `AutoDownloadModels` | Array of strings | Local models to download in the background. Use transcription model IDs, and `VoiceInk Refine V1` for VoiceInk Refine. |

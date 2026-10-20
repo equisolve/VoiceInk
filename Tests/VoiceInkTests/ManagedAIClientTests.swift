@@ -113,22 +113,16 @@ final class ManagedEndpointStubProtocol: URLProtocol {
 final class ManagedAIClientTests: XCTestCase {
     private let token = "test-proxy-token"
     private let completionsURL = "https://ai.example.com/v1/chat/completions"
-    private let savedKeys = [CloudPolicy.disableCloudServicesKey] + ManagedAIEndpoint.allKeys
-    private var savedValues: [String: Any] = [:]
+    private let preferences = TestPreferences.defaults
 
     override func setUp() async throws {
         try await super.setUp()
-        for key in savedKeys {
-            savedValues[key] = UserDefaults.standard.object(forKey: key)
-            UserDefaults.standard.removeObject(forKey: key)
-        }
+        TestPreferences.reset()
     }
 
     override func tearDown() async throws {
         ManagedEndpointStubProtocol.stop()
-        for key in savedKeys {
-            UserDefaults.standard.set(savedValues[key], forKey: key)
-        }
+        TestPreferences.reset()
         try await super.tearDown()
     }
 
@@ -239,10 +233,10 @@ final class ManagedAIClientTests: XCTestCase {
 
     /// The managed provider gets the same Default prompt and vocabulary block as other OpenAI-compatible providers.
     func testEnhancementSendsDefaultPromptAndVocabularyToManagedEndpoint() async throws {
-        UserDefaults.standard.set(true, forKey: CloudPolicy.disableCloudServicesKey)
-        UserDefaults.standard.set("https://ai.example.com/v1", forKey: ManagedAIEndpoint.endpointURLKey)
-        UserDefaults.standard.set("voiceink-cleanup", forKey: ManagedAIEndpoint.modelKey)
-        UserDefaults.standard.set(token, forKey: ManagedAIEndpoint.tokenKey)
+        preferences.set(true, forKey: CloudPolicy.disableCloudServicesKey)
+        preferences.set("https://ai.example.com/v1", forKey: ManagedAIEndpoint.endpointURLKey)
+        preferences.set("voiceink-cleanup", forKey: ManagedAIEndpoint.modelKey)
+        preferences.set(token, forKey: ManagedAIEndpoint.tokenKey)
         ManagedEndpointStubProtocol.start(replies: [completionsURL: .completion("Send it to the Quorvane team.")])
 
         let container = try ModelContainer(
@@ -252,7 +246,7 @@ final class ManagedAIClientTests: XCTestCase {
         try container.mainContext.save()
 
         let prompt = try XCTUnwrap(PromptTemplates.seedPrompts.first { $0.id == PromptTemplates.defaultPromptId })
-        let service = AIEnhancementService(aiService: AIService(), modelContext: container.mainContext)
+        let service = AIEnhancementService(aiService: AIService(defaultModeStore: FakeDefaultModeStore()),modelContext: container.mainContext)
         let configuration = EnhancementRuntimeConfiguration(
             mode: nil, isEnabled: true, prompt: prompt, provider: .managed, modelName: nil,
             useClipboardContext: false, useSelectedTextContext: false, useScreenCaptureContext: false)
@@ -277,17 +271,17 @@ final class ManagedAIClientTests: XCTestCase {
         guard let url = environment["VOICEINK_PROXY_URL"], let model = environment["VOICEINK_PROXY_MODEL"] else {
             throw XCTSkip("Set VOICEINK_PROXY_URL and VOICEINK_PROXY_MODEL to run against a proxy")
         }
-        UserDefaults.standard.set(true, forKey: CloudPolicy.disableCloudServicesKey)
-        UserDefaults.standard.set(url, forKey: ManagedAIEndpoint.endpointURLKey)
-        UserDefaults.standard.set(model, forKey: ManagedAIEndpoint.modelKey)
-        UserDefaults.standard.set(environment["VOICEINK_PROXY_TOKEN"], forKey: ManagedAIEndpoint.tokenKey)
+        preferences.set(true, forKey: CloudPolicy.disableCloudServicesKey)
+        preferences.set(url, forKey: ManagedAIEndpoint.endpointURLKey)
+        preferences.set(model, forKey: ManagedAIEndpoint.modelKey)
+        preferences.set(environment["VOICEINK_PROXY_TOKEN"], forKey: ManagedAIEndpoint.tokenKey)
 
         let container = try ModelContainer(
             for: Schema([VocabularyWord.self]), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
         container.mainContext.insert(VocabularyWord(word: "Quorvane"))
         try container.mainContext.save()
         let prompt = try XCTUnwrap(PromptTemplates.seedPrompts.first { $0.id == PromptTemplates.defaultPromptId })
-        let service = AIEnhancementService(aiService: AIService(), modelContext: container.mainContext)
+        let service = AIEnhancementService(aiService: AIService(defaultModeStore: FakeDefaultModeStore()),modelContext: container.mainContext)
         let configuration = EnhancementRuntimeConfiguration(
             mode: nil, isEnabled: true, prompt: prompt, provider: .managed, modelName: nil,
             useClipboardContext: false, useSelectedTextContext: false, useScreenCaptureContext: false)

@@ -253,7 +253,13 @@ enum ModeRemovalResult {
     case notFound
 }
 
-class ModeManager: ObservableObject {
+/// Reads and updates the default mode. `ModeManager` is the app's store; tests use a stand-in.
+protocol DefaultModeStore: AnyObject {
+    func getDefaultConfiguration() -> ModeConfig?
+    func updateConfiguration(_ updatedConfiguration: ModeConfig)
+}
+
+class ModeManager: ObservableObject, DefaultModeStore {
     static let shared = ModeManager()
     @Published var configurations: [ModeConfig] = []
     @Published var activeConfiguration: ModeConfig?
@@ -264,7 +270,7 @@ class ModeManager: ObservableObject {
     private init() {
         loadConfigurations()
 
-        if let activeConfigIdString = UserDefaults.standard.string(forKey: activeConfigIdKey),
+        if let activeConfigIdString = AppPreferences.defaults.string(forKey: activeConfigIdKey),
             let activeConfigId = UUID(uuidString: activeConfigIdString)
         {
             activeConfiguration = configurations.first { $0.id == activeConfigId }
@@ -284,7 +290,7 @@ class ModeManager: ObservableObject {
 
     func saveConfigurations() {
         if let data = try? JSONEncoder().encode(configurations) {
-            UserDefaults.standard.set(data, forKey: configKey)
+            AppPreferences.defaults.set(data, forKey: configKey)
         }
         NotificationCenter.default.post(name: .modeConfigurationsDidChange, object: nil)
     }
@@ -632,7 +638,7 @@ class ModeManager: ObservableObject {
         } else {
             activeConfiguration = config
         }
-        UserDefaults.standard.set(config?.id.uuidString, forKey: activeConfigIdKey)
+        AppPreferences.defaults.set(config?.id.uuidString, forKey: activeConfigIdKey)
         self.objectWillChange.send()
     }
 

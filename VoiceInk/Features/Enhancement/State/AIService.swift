@@ -56,7 +56,7 @@ enum AIProvider: String, CaseIterable {
         case .voiceInkRefine:
             return ""
         case .ollama:
-            return UserDefaults.standard.string(forKey: "ollamaBaseURL") ?? "http://localhost:11434"
+            return AppPreferences.defaults.string(forKey: "ollamaBaseURL") ?? "http://localhost:11434"
         case .localCLI:
             return ""
         case .custom:
@@ -257,7 +257,8 @@ class AIService: ObservableObject {
     }
 
     @Published private var selectedModels: [AIProvider: String] = [:]
-    private let userDefaults = UserDefaults.standard
+    private let userDefaults: UserDefaults
+    private let defaultModeStore: DefaultModeStore?
     let voiceInkRefineService = VoiceInkRefineService.shared
     private lazy var ollamaService = OllamaService()
     private lazy var localCLIService = LocalCLIService()
@@ -369,7 +370,12 @@ class AIService: ObservableObject {
         return provider.availableModels
     }
 
-    init() {
+    /// - Parameter userDefaults: Where the selection is saved and read.
+    /// - Parameter defaultModeStore: The modes to keep in step when a blocked provider is replaced. Nil uses
+    ///   `ModeManager.shared`.
+    init(userDefaults: UserDefaults = AppPreferences.defaults, defaultModeStore: DefaultModeStore? = nil) {
+        self.userDefaults = userDefaults
+        self.defaultModeStore = defaultModeStore
         if userDefaults.string(forKey: "selectedAIProvider") == "GROQ" {
             userDefaults.set("Groq", forKey: "selectedAIProvider")
         }
@@ -399,7 +405,6 @@ class AIService: ObservableObject {
 
         loadSavedModelSelections()
         loadSavedOpenRouterModels()
-        appliedManagedMarker = userDefaults.string(forKey: Self.managedSelectionMarkerKey)
         applyManagedProviderSelection()
         initializeAutoLearnSelectionIfNeeded()
 
@@ -457,14 +462,9 @@ class AIService: ObservableObject {
         }
     }
 
-    private static let managedSelectionMarkerKey = "ManagedAIProviderSelectedEndpoint"
-
-    /// The managed endpoint this instance last applied. The app runs more than one `AIService`, so each one tracks its
-    /// own; the saved value carries it across launches.
-    private var appliedManagedMarker: String?
-
-    /// Selects the organization's provider the first time a managed endpoint appears or changes, and whenever the
-    /// selected provider is blocked by cloud policy. Moves off it when the managed endpoint is removed.
+    /// Moves off a provider that cloud policy blocks: the organization's provider replaces it, both here and in the
+    /// default mode, and is itself replaced when its endpoint is removed. A new endpoint or model never changes the
+    /// selection; organization defaults come only from `DefaultEnhancementProvider` and `ManagedDefaultsVersion`.
     func applyManagedProviderSelection() {
         guard let endpoint = ManagedAIEndpoint.current,
             CloudPolicy.isEnhancementProviderAllowed(.managed, managedEndpoint: endpoint)
@@ -475,19 +475,28 @@ class AIService: ObservableObject {
             return
         }
 
-        let marker = "\(endpoint.baseURL.absoluteString)|\(endpoint.model)"
-        let isNewEndpoint = appliedManagedMarker != marker
-        let isSelectionBlocked = !CloudPolicy.isEnhancementProviderAllowed(
-            selectedProvider,
-            customBaseURL: selectedProvider == .custom
-                ? CustomAIProviderManager.shared.requestConfiguration(forModel: selectedModel(for: .custom))?.baseURL
-                : nil
-        )
-        if isNewEndpoint || isSelectionBlocked, selectedProvider != .managed {
+        if selectedProvider != .managed, isBlockedByCloudPolicy(selectedProvider, model: selectedModel(for: selectedProvider)) {
             selectedProvider = .managed
         }
-        appliedManagedMarker = marker
-        userDefaults.set(marker, forKey: Self.managedSelectionMarkerKey)
+
+        let modes = defaultModeStore ?? ModeManager.shared
+        if var mode = modes.getDefaultConfiguration(),
+            let name = mode.selectedAIProvider,
+            let provider = AIProvider(rawValue: name), provider != .managed,
+            isBlockedByCloudPolicy(provider, model: mode.selectedAIModel)
+        {
+            mode.selectedAIProvider = AIProvider.managed.rawValue
+            mode.selectedAIModel = endpoint.model
+            modes.updateConfiguration(mode)
+        }
+    }
+
+    /// True when cloud policy blocks the provider. A custom provider is checked against the endpoint of its model.
+    private func isBlockedByCloudPolicy(_ provider: AIProvider, model: String?) -> Bool {
+        let customBaseURL =
+            provider == .custom
+            ? model.flatMap { CustomAIProviderManager.shared.requestConfiguration(forModel: $0)?.baseURL } : nil
+        return !CloudPolicy.isEnhancementProviderAllowed(provider, customBaseURL: customBaseURL)
     }
 
     deinit {

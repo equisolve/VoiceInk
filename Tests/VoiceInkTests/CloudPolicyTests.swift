@@ -92,32 +92,29 @@ extension URLSessionConfiguration {
 final class CloudPolicyTests: XCTestCase {
     private let key = CloudPolicy.disableCloudServicesKey
     private let ollamaBaseURLKey = "ollamaBaseURL"
-    private var savedValue: Any?
-    private var savedOllamaBaseURL: Any?
+    private let preferences = TestPreferences.defaults
 
     override func setUp() {
         super.setUp()
-        savedValue = UserDefaults.standard.object(forKey: key)
-        savedOllamaBaseURL = UserDefaults.standard.object(forKey: ollamaBaseURLKey)
+        TestPreferences.reset()
         RecordingURLProtocol.start()
     }
 
     override func tearDown() {
         RecordingURLProtocol.stop()
-        UserDefaults.standard.set(savedValue, forKey: key)
-        UserDefaults.standard.set(savedOllamaBaseURL, forKey: ollamaBaseURLKey)
+        TestPreferences.reset()
         super.tearDown()
     }
 
     private func setOllamaBaseURL(_ url: String?) {
-        UserDefaults.standard.set(url, forKey: ollamaBaseURLKey)
+        preferences.set(url, forKey: ollamaBaseURLKey)
     }
 
     private func setCloudDisabled(_ disabled: Bool?) {
         if let disabled {
-            UserDefaults.standard.set(disabled, forKey: key)
+            preferences.set(disabled, forKey: key)
         } else {
-            UserDefaults.standard.removeObject(forKey: key)
+            preferences.removeObject(forKey: key)
         }
     }
 
