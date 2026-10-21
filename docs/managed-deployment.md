@@ -2,9 +2,11 @@
 
 This page is for administrators who deploy VoiceInk with a mobile device management (MDM) service, such as Jamf Pro. It describes the preference keys that turn off cloud services, set up an organization AI endpoint, and set default models, and gives a sample configuration profile.
 
+VoiceInk reads these keys from the preference domain that matches its bundle ID. Equisolve's release, built with `make equisolve-release` as described in [Equisolve release](../BUILDING.md#equisolve-release), has the bundle ID `com.equisolve.VoiceInk`, and this page uses that domain. A build with the upstream bundle ID, such as one from `make local`, reads the `com.prakashjoshipax.VoiceInk` domain instead.
+
 ## Turn off cloud services
 
-Set the Boolean key `DisableCloudServices` to `true` in the `com.prakashjoshipax.VoiceInk` preference domain. When the key is `false` or absent, VoiceInk behaves exactly as it does without the key.
+Set the Boolean key `DisableCloudServices` to `true` in the `com.equisolve.VoiceInk` preference domain. When the key is `false` or absent, VoiceInk behaves exactly as it does without the key.
 
 When the value comes from a configuration profile, users can't change it, and the app labels each hidden or turned-off option with **Managed by your organization**. When the value is set locally with `defaults write`, the app shows **Cloud services are turned off** instead.
 
@@ -29,13 +31,13 @@ VoiceInk fully trusts an Ollama or custom endpoint on `localhost`, `127.0.0.1`, 
 The key covers transcription and AI enhancement. These network connections aren't affected:
 
 - Downloads of local models (Whisper, Parakeet, transcribe.cpp, and VoiceInk Refine).
-- Update checks through Sparkle. To turn off automatic checks, set `VoiceInkChecksForUpdatesOnLaunch` to `false`.
+- Update checks through Sparkle, in builds that have an update feed. Equisolve's release has none, so it never checks for updates. In other builds, set `VoiceInkChecksForUpdatesOnLaunch` to `false` to turn off automatic checks.
 - In-app announcements. To turn them off, set `enableAnnouncements` to `false`.
-- License activation and validation.
+- License activation and validation, in builds that check a license. Equisolve's release doesn't.
 
 ## Provide an organization AI endpoint
 
-To give users AI enhancement through a service your organization runs, set these keys in the `com.prakashjoshipax.VoiceInk` domain. The endpoint must accept OpenAI-compatible chat completion requests.
+To give users AI enhancement through a service your organization runs, set these keys in the `com.equisolve.VoiceInk` domain. The endpoint must accept OpenAI-compatible chat completion requests.
 
 | Key | Type | Value |
 | --- | --- | --- |
@@ -84,7 +86,7 @@ When `DisableCloudServices` is `false` or absent, the organization provider is a
 
 ## Other useful keys
 
-All of these keys are in the `com.prakashjoshipax.VoiceInk` domain.
+All of these keys are in the `com.equisolve.VoiceInk` domain.
 
 | Key | Type | Effect |
 | --- | --- | --- |
@@ -92,13 +94,13 @@ All of these keys are in the `com.prakashjoshipax.VoiceInk` domain.
 | `ManagedAIEndpointURL`, `ManagedAIModel`, `ManagedAIToken`, `ManagedAIProviderName` | String | Set up an organization AI endpoint, as described in [Provide an organization AI endpoint](#provide-an-organization-ai-endpoint). |
 | `IsAutoLearnDictionaryEnabled` | Boolean | `false` turns off Auto-Learn Dictionary. |
 | `enableAnnouncements` | Boolean | `false` turns off in-app announcements. |
-| `VoiceInkChecksForUpdatesOnLaunch` | Boolean | `false` turns off automatic update checks. |
+| `VoiceInkChecksForUpdatesOnLaunch` | Boolean | `false` turns off automatic update checks. Equisolve's release never checks, so the key has no effect there. |
 | `IsTranscriptionCleanupEnabled` | Boolean | `true` deletes transcripts and recordings after the retention period. |
 | `TranscriptionRetentionMinutes` | Integer | How long to keep transcripts and recordings, in minutes, when cleanup is on. For example, `10080` is seven days. |
 
 ## Sample configuration profile
 
-This profile sets all of the keys in the previous table and the [default models](#set-default-models): Parakeet for transcription and the organization AI endpoint for enhancement, with VoiceInk Refine downloaded as the fallback. Auto-Learn Dictionary stays off. Replace the `ManagedAI` values with your endpoint, model, and token. If you don't run an AI endpoint, remove those keys and set `DefaultEnhancementProvider` to `VoiceInk Refine`. Upload it to your MDM service as a custom configuration profile, or paste the inner dictionary under `mcx_preference_settings` into a custom settings payload for the `com.prakashjoshipax.VoiceInk` domain. Replace the `PayloadUUID` values with your own (run `uuidgen`), and change `PayloadIdentifier` and `PayloadOrganization` to match your organization.
+This profile sets all of the keys in the previous table and the [default models](#set-default-models): Parakeet for transcription and the organization AI endpoint for enhancement, with VoiceInk Refine downloaded as the fallback. Auto-Learn Dictionary stays off. Replace the `ManagedAI` values with your endpoint, model, and token. If you don't run an AI endpoint, remove those keys and set `DefaultEnhancementProvider` to `VoiceInk Refine`. Upload it to your MDM service as a custom configuration profile, or paste the inner dictionary under `mcx_preference_settings` into a custom settings payload for the `com.equisolve.VoiceInk` domain. Replace the `PayloadUUID` values with your own (run `uuidgen`), and change `PayloadIdentifier` and `PayloadOrganization` to match your organization.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -120,7 +122,7 @@ This profile sets all of the keys in the previous table and the [default models]
             <string>VoiceInk settings</string>
             <key>PayloadContent</key>
             <dict>
-                <key>com.prakashjoshipax.VoiceInk</key>
+                <key>com.equisolve.VoiceInk</key>
                 <dict>
                     <key>Forced</key>
                     <array>
@@ -188,7 +190,7 @@ This profile sets all of the keys in the previous table and the [default models]
 To check the result on a Mac that has the profile, run:
 
 ```sh
-defaults read com.prakashjoshipax.VoiceInk DisableCloudServices
+defaults read com.equisolve.VoiceInk DisableCloudServices
 ```
 
 The command prints `1` when cloud services are off.
@@ -235,20 +237,26 @@ VoiceInk asks for Screen Recording permission to read on-screen text for context
 codesign -dr - /Applications/VoiceInk.app
 ```
 
-Rebuilding or re-signing the app changes the code requirement, so update the PPPC profile whenever you deploy a build signed with a different identity.
+For Equisolve's release, the identifier is `com.equisolve.VoiceInk`, the identifier type is bundle ID, and the code requirement is:
+
+```text
+identifier "com.equisolve.VoiceInk" and anchor apple generic and certificate 1[field.1.2.840.113635.100.6.2.6] /* exists */ and certificate leaf[field.1.2.840.113635.100.6.1.13] /* exists */ and certificate leaf[subject.OU] = "3MMFZ6XFFA"
+```
+
+This requirement names the bundle ID and Equisolve's team, not a single build, so it stays the same across Equisolve releases. A build signed with a different identity, or with a different bundle ID, has a different code requirement and needs its own PPPC entry.
 
 ## Test the key without a profile
 
 To try the behavior on one Mac without MDM, set the key locally:
 
 ```sh
-defaults write com.prakashjoshipax.VoiceInk DisableCloudServices -bool true
+defaults write com.equisolve.VoiceInk DisableCloudServices -bool true
 ```
 
 To go back to the default behavior, delete the key:
 
 ```sh
-defaults delete com.prakashjoshipax.VoiceInk DisableCloudServices
+defaults delete com.equisolve.VoiceInk DisableCloudServices
 ```
 
 A value set this way isn't managed, so users can change it the same way.
