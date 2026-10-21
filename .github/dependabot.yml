@@ -1,7 +1,9 @@
 # Dependabot security updates only. Version updates are off
 # (open-pull-requests-limit: 0) because routine bumps go in the monthly update
 # pull request, which keeps every dependency on an exact, reviewed version.
-# Security update pull requests still open for packages with a Dependabot alert.
+# Dependabot security updates stay on and try to open a pull request for a
+# package with a Dependabot alert. GitHub's docs don't cover those pull requests
+# for an Xcode project with no Package.swift, so treat the alert as the signal.
 # See "Keeping VoiceInk updated" in BUILDING.md.
 version: 2
 updates:
