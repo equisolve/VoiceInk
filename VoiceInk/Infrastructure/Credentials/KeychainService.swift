@@ -24,15 +24,33 @@ final class KeychainService {
     }
 
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "KeychainService")
+    // Under XCTest the memory store below keeps every call off the Keychain. The separate service name is a second
+    // guard: anything a test still writes can never land in, or be read from, the app's real items.
     #if LOCAL_BUILD
-        private let service = "com.prakashjoshipax.VoiceInk.Local"
+        let service =
+            ProcessInfo.processInfo.isRunningUnitTests
+            ? "com.prakashjoshipax.VoiceInk.Tests" : "com.prakashjoshipax.VoiceInk.Local"
         private let defaults = UserDefaults.standard
         private let legacyLocalPrefix = "LocalKeychain_"
     #else
-        private let service = "com.prakashjoshipax.VoiceInk"
+        let service =
+            ProcessInfo.processInfo.isRunningUnitTests
+            ? "com.prakashjoshipax.VoiceInk.Tests" : "com.prakashjoshipax.VoiceInk"
     #endif
 
-    private init() {}
+    /// Holds credentials in memory instead of the Keychain. A unit test run always uses one, so tests never read
+    /// or write the login Keychain of the Mac they run on.
+    private let memoryStore: InMemoryCredentialStore?
+
+    var usesMemoryStore: Bool { memoryStore != nil }
+
+    private convenience init() {
+        self.init(memoryStore: ProcessInfo.processInfo.isRunningUnitTests ? InMemoryCredentialStore() : nil)
+    }
+
+    init(memoryStore: InMemoryCredentialStore?) {
+        self.memoryStore = memoryStore
+    }
 
     // MARK: - Public API
 
@@ -59,6 +77,11 @@ final class KeychainService {
         syncable: Bool = true,
         accessibility: Accessibility? = nil
     ) -> Bool {
+        if let memoryStore {
+            memoryStore.set(data, forKey: key)
+            return true
+        }
+
         let query = baseQuery(forKey: key, syncable: syncable)
         var attributes: [String: Any] = [kSecValueData as String: data]
         applyAccessibility(accessibility, to: &attributes)
@@ -142,6 +165,10 @@ final class KeychainService {
 
     /// Retrieves data while preserving the Security framework status.
     func readData(forKey key: String, syncable: Bool = true) -> ReadResult<Data> {
+        if let memoryStore {
+            return memoryStore.data(forKey: key).map { .value($0) } ?? .notFound
+        }
+
         var query = baseQuery(forKey: key, syncable: syncable)
         query[kSecReturnData as String] = kCFBooleanTrue
         query[kSecMatchLimit as String] = kSecMatchLimitOne
@@ -177,6 +204,11 @@ final class KeychainService {
     /// Deletes an item from Keychain.
     @discardableResult
     func delete(forKey key: String, syncable: Bool = true) -> Bool {
+        if let memoryStore {
+            memoryStore.set(nil, forKey: key)
+            return true
+        }
+
         let query = baseQuery(forKey: key, syncable: syncable)
         let status = SecItemDelete(query as CFDictionary)
 
@@ -196,6 +228,10 @@ final class KeychainService {
 
     /// Checks if a key exists in Keychain.
     func exists(forKey key: String, syncable: Bool = true) -> Bool {
+        if let memoryStore {
+            return memoryStore.data(forKey: key) != nil
+        }
+
         var query = baseQuery(forKey: key, syncable: syncable)
         query[kSecReturnData as String] = kCFBooleanFalse
 
@@ -243,5 +279,19 @@ final class KeychainService {
         #if LOCAL_BUILD
             defaults.removeObject(forKey: legacyLocalPrefix + key)
         #endif
+    }
+}
+
+/// A credential store that lives only in memory, for unit tests.
+final class InMemoryCredentialStore: @unchecked Sendable {
+    private var items: [String: Data] = [:]
+    private let lock = NSLock()
+
+    func data(forKey key: String) -> Data? {
+        lock.withLock { items[key] }
+    }
+
+    func set(_ data: Data?, forKey key: String) {
+        lock.withLock { items[key] = data }
     }
 }

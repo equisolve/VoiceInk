@@ -1,6 +1,6 @@
 # Managed deployment
 
-This page is for administrators who deploy VoiceInk with a mobile device management (MDM) service, such as Jamf Pro. It describes the preference key that turns off cloud services and gives a sample configuration profile.
+This page is for administrators who deploy VoiceInk with a mobile device management (MDM) service, such as Jamf Pro. It describes the preference key that turns off cloud services, the keys that set default models, and a sample configuration profile.
 
 ## Turn off cloud services
 
@@ -121,6 +121,55 @@ defaults read com.prakashjoshipax.VoiceInk DisableCloudServices
 ```
 
 The command prints `1` when cloud services are off.
+
+## Set default models
+
+These keys set starting choices that users can change later. They are separate from the keys in the previous table: a profile forces every key it sets, so VoiceInk reads these keys and copies their values into its own settings, which stay editable.
+
+| Key | Type | Effect |
+| --- | --- | --- |
+| `DefaultTranscriptionModel` | String | The transcription model to select, by model ID. For example, `parakeet-tdt-0.6b-v3`. |
+| `DefaultEnhancementProvider` | String | The AI enhancement provider to select, by name. For example, `VoiceInk Refine` or `Ollama`. |
+| `DefaultEnhancementModel` | String | Optional. The model to select for that provider. VoiceInk Refine has one model, so VoiceInk ignores this key for it. |
+| `DefaultEnhancementEnabled` | Boolean | `true` turns on AI enhancement, and `false` turns it off. |
+| `AutoDownloadModels` | Array of strings | Local models to download in the background. Use transcription model IDs, and `VoiceInk Refine V1` for VoiceInk Refine. |
+| `ManagedDefaultsVersion` | Integer | Required to apply the choices. VoiceInk applies the choices once for each version. |
+
+### How VoiceInk applies the defaults
+
+- **Once per version.** VoiceInk applies the choices at launch and when the profile changes, and only when `ManagedDefaultsVersion` is greater than the last version it applied. It records the applied version in its own settings. After that, a user's changes stay, even across restarts. To push the choices again, raise the version.
+- **After onboarding.** On a new install, VoiceInk applies the choices when the user finishes onboarding. The choices go into the default mode and the global model setting. Other modes keep their own settings.
+- **Downloads.** VoiceInk starts each missing model in `AutoDownloadModels` in the background when it launches, and the user sees its progress in the model library. A download that fails starts again at the next launch. `AutoDownloadModels` is the only key that downloads anything, so list the default models there too.
+- **Waiting for a download.** If the default transcription model hasn't been downloaded yet, VoiceInk keeps the current model and switches when the download finishes. It doesn't switch if the user chose another model in the meantime.
+- **Onboarding.** When `DefaultTranscriptionModel`, `DefaultEnhancementProvider`, `DefaultEnhancementEnabled`, or `AutoDownloadModels` is set, onboarding skips entering an API key. It skips choosing a model too when the default transcription model, or another local model, is already downloaded. Otherwise it waits on the model step and continues to the practice steps when the download finishes. That step shows the default transcription model and its download progress, for any local model type; the user can start the download there if `AutoDownloadModels` doesn't list it. When the profile sets no local transcription model, the step offers Parakeet V3 instead. The permission and microphone steps stay, and the progress indicator counts only the steps shown.
+- **Cloud services.** When `DisableCloudServices` is `true`, VoiceInk ignores a cloud model or cloud provider in these keys and writes a log message. Local choices still apply. If `DefaultEnhancementEnabled` is `true` and the provider is ignored, VoiceInk leaves enhancement as it was. VoiceInk still records the version as applied, so the ignored choices don't apply later on their own. If you remove `DisableCloudServices` and want them applied, raise `ManagedDefaultsVersion` too.
+- **No keys.** When none of these keys are set, VoiceInk behaves as it does without a profile.
+
+### VoiceInk Refine on smaller Macs
+
+VoiceInk Refine needs a Mac with Apple silicon and at least 16 GB of memory, and its download is about 1.1 GB. On an Intel Mac or a Mac with less memory, VoiceInk ignores VoiceInk Refine in `DefaultEnhancementProvider` and `AutoDownloadModels`, so it doesn't download the model or select it. It also ignores `DefaultEnhancementEnabled` set to `true`, so enhancement stays off unless the user turns it on. VoiceInk writes a log message for each ignored key that says why. The transcription default still applies. The same profile can go to every Mac; you don't need a separate profile for smaller Macs.
+
+### Sample settings
+
+These keys select Parakeet for transcription and turn on VoiceInk Refine for enhancement. Add them to the `mcx_preference_settings` dictionary in the sample profile.
+
+```xml
+<key>DefaultTranscriptionModel</key>
+<string>parakeet-tdt-0.6b-v3</string>
+<key>DefaultEnhancementProvider</key>
+<string>VoiceInk Refine</string>
+<key>DefaultEnhancementEnabled</key>
+<true/>
+<key>AutoDownloadModels</key>
+<array>
+    <string>parakeet-tdt-0.6b-v3</string>
+    <string>VoiceInk Refine V1</string>
+</array>
+<key>ManagedDefaultsVersion</key>
+<integer>1</integer>
+```
+
+The Parakeet model IDs are `parakeet-tdt-0.6b-v2` (English only) and `parakeet-tdt-0.6b-v3` (English and 25 European languages).
 
 ## Deny Screen Recording
 
