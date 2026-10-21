@@ -24,7 +24,6 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/FluidInference/FluidAudio",
       "state" : {
-        "branch" : "main",
         "revision" : "762baf6733ca0f0dbeb1ce335363fc75066bd2c9"
       }
     },
@@ -50,7 +49,6 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Beingpax/mediaremote-adapter",
       "state" : {
-        "branch" : "master",
         "revision" : "cf30c4f1af29b5829d859f088f8dbdf12611a046"
       }
     },
@@ -85,7 +83,6 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/Beingpax/SelectedTextKit.git",
       "state" : {
-        "branch" : "performance/off-main-menu-action",
         "revision" : "05a3e5177300d800c2785be83ba2ba7fa775e41a"
       }
     },

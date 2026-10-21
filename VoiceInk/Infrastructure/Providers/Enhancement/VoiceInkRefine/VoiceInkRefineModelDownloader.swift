@@ -146,28 +146,28 @@ final class VoiceInkRefineModelDownloader: @unchecked Sendable {
             return false
         }
 
-        let recordURL = snapshotDirectory.appendingPathComponent(verificationRecordFilename)
-        if !FileManager.default.fileExists(atPath: recordURL.path) {
-            // Existing installations use the original size-based completion check.
-            return true
-        }
-
+        // An installation without a matching record, including one made before records existed, is hashed in full
+        // once below and accepted only if every file matches its pinned SHA-256.
         if storedVerificationRecord(at: snapshotDirectory) == currentRecord {
             return true
         }
 
-        do {
-            for file in files {
-                try validateDownloadedFile(
-                    at: snapshotDirectory.appendingPathComponent(file.path),
-                    file: file
+        for file in files {
+            let url = snapshotDirectory.appendingPathComponent(file.path)
+            do {
+                try validateDownloadedFile(at: url, file: file)
+            } catch {
+                // Fail closed: remove the file that doesn't match, so the install reads as not downloaded without
+                // being hashed again on every refresh, and the next download replaces only that file.
+                try? FileManager.default.removeItem(at: url)
+                try? FileManager.default.removeItem(
+                    at: snapshotDirectory.appendingPathComponent(verificationRecordFilename)
                 )
+                return false
             }
-            try? persistVerificationRecord(currentRecord, at: snapshotDirectory)
-            return true
-        } catch {
-            return false
         }
+        try? persistVerificationRecord(currentRecord, at: snapshotDirectory)
+        return true
     }
 
     private let repositoryID: String

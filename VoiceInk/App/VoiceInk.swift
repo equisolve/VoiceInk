@@ -137,7 +137,8 @@ struct VoiceInkApp: App {
             .appendingPathComponent("com.prakashjoshipax.VoiceInk")
         let modelsDirectory = appSupportDirectory.appendingPathComponent("WhisperModels")
 
-        // 2. Create model managers
+        // 2. Create model managers. Pin FluidAudio downloads to fixed commits before anything can start one.
+        PinnedFluidAudioModels.installRevisionPins()
         let whisperModelManager = WhisperModelManager(modelsDirectory: modelsDirectory)
         let fluidAudioModelManager = FluidAudioModelManager()
         let transcriptionModelManager = TranscriptionModelManager(

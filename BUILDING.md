@@ -103,6 +103,19 @@ make equisolve-release EQUISOLVE_RELEASE_ARGS="--skip-notarization --allow-dirty
 
 Pass `--identity -` to sign ad hoc on a Mac without the certificate. Neither kind of test build opens on other Macs. For all options, run `scripts/equisolve-release.sh --help`.
 
+## Updating pinned dependencies
+
+Third-party code and models are fixed to exact versions, so an update is always a reviewed change in a pull request. Each pin lives in one place:
+
+| Dependency | Where the pin lives | How to update it |
+| --- | --- | --- |
+| whisper.cpp | `WHISPER_CPP_TAG` and `WHISPER_CPP_COMMIT` in `Makefile` | Set the new release tag and the commit it points to. Get the commit from the `^{}` line of `git ls-remote --tags https://github.com/ggml-org/whisper.cpp.git 'refs/tags/<tag>*'`; the other line is the tag object, which the build rejects. Run `make whisper`; it rebuilds whenever the commit changes and stops if the tag points anywhere else. The weekly upstream check reads `WHISPER_CPP_COMMIT` to decide which whisper.cpp and llama.cpp advisories are new. |
+| Swift packages | Each package's requirement in `VoiceInk.xcodeproj/project.pbxproj` (`exactVersion` or `revision`), and `VoiceInk.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved` | In Xcode, open **Package Dependencies**, change the package's rule to the new exact version or commit, and let Xcode update `Package.resolved`. Commit both files. `make build`, `make local`, `make release`, and `make equisolve-release` pass `-onlyUsePackageVersionsFromResolvedFile`, so they fail instead of resolving anything not recorded in `Package.resolved`, including transitive packages. |
+| Parakeet V3 and Silero VAD models | `PinnedFluidAudioModels.parakeetV3` and `PinnedFluidAudioModels.vad` in `VoiceInk/Infrastructure/Providers/Transcription/FluidAudio/PinnedFluidAudioModels.swift` | Set `revision` to the new Hugging Face commit and replace `files` with the path, size, and SHA-256 of every file VoiceInk downloads at that commit. For large files, `https://huggingface.co/api/models/<repo>/tree/<revision>?recursive=1` lists the SHA-256 under `lfs.oid`; download and hash the small files. Downloading the model in the app then reports any file you missed, because files that aren't listed fail verification. If you also update FluidAudio, check that it still downloads the same file set. |
+| VoiceInk Refine model | `VoiceInkRefineService.pinnedRevision` and `VoiceInkRefineModelDownloader.files` | Same as Parakeet: a new commit plus the size and SHA-256 of each file. |
+
+Not pinned yet: the Whisper GGML models download from the `main` branch of `ggerganov/whisper.cpp` on Hugging Face (`VoiceInk/Features/ModelLibrary/Models/TranscriptionModel.swift`), and the FluidAudio models other than Parakeet V3 and Silero VAD (Parakeet V2, Parakeet Ultra, Parakeet Unified, and Nemotron) use FluidAudio's default revision without a VoiceInk hash check.
+
 ## Troubleshooting
 
 - Run `make check` to verify the required tools.

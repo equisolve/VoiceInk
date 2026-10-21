@@ -244,6 +244,7 @@ xcodebuild archive \
     -derivedDataPath "$DERIVED_DATA" \
     -archivePath "$ARCHIVE_PATH" \
     -xcconfig "$LOCAL_XCCONFIG" \
+    -onlyUsePackageVersionsFromResolvedFile \
     CODE_SIGNING_ALLOWED=NO \
     CODE_SIGNING_REQUIRED=NO \
     CODE_SIGN_IDENTITY="" \
