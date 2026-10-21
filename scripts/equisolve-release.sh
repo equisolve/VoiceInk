@@ -61,8 +61,9 @@ Options:
   --allow-dirty               Permit a dirty Git working tree.
   --setup-notarization        Store notarization credentials in the Keychain and exit.
   --verify <VoiceInk.app>     Check a signed app's bundle ID, Info.plist, entitlements,
-                              hardened runtime, and team, and exit. Add --identity -
-                              to skip the team check for an ad-hoc build.
+                              hardened runtime, team, and timestamps, and exit. Add
+                              --identity - to skip the team and timestamp checks for
+                              an ad-hoc build.
   -h, --help                  Show this help.
 EOF
 }
@@ -80,7 +81,7 @@ require_command() {
     command -v "$1" >/dev/null 2>&1 || fail "Required command not found: $1"
 }
 
-# Checks a signed app against the release rules. With AD_HOC=1, skips the team check.
+# Checks a signed app against the release rules. With AD_HOC=1, skips the team and timestamp checks.
 verify_app() {
     local app="$1"
     local plist="$app/Contents/Info.plist"
@@ -97,14 +98,9 @@ verify_app() {
         fi
     done
 
-    entitlements="$(codesign -d --entitlements - --xml "$app" 2>/dev/null)" \
-        || fail "Can't read entitlements: $app"
-    for forbidden in com.apple.developer.icloud com.apple.developer.aps-environment keychain-access-groups \
-        com.apple.security.cs.disable-library-validation; do
-        [[ "$entitlements" != *"$forbidden"* ]] || fail "Signed entitlements include $forbidden"
-    done
-
-    # Every Mach-O file needs hardened runtime and, for a Developer ID build, Equisolve's team.
+    # Every Mach-O file, the app's own and each nested one, needs hardened runtime and none of
+    # the forbidden entitlements. For a Developer ID build, each also needs Equisolve's team
+    # and a secure timestamp, which notarization requires.
     while IFS= read -r candidate; do
         [[ "$(file -b "$candidate")" == *Mach-O* ]] || continue
         count=$((count + 1))
@@ -114,7 +110,15 @@ verify_app() {
         if [[ "$AD_HOC" == "0" ]]; then
             grep -Fx "TeamIdentifier=$TEAM_ID" >/dev/null <<<"$details" \
                 || fail "Not signed by team $TEAM_ID: $candidate"
+            grep -E '^Timestamp=' >/dev/null <<<"$details" \
+                || fail "No secure timestamp: $candidate"
         fi
+        entitlements="$(codesign -d --entitlements - --xml "$candidate" 2>/dev/null)" \
+            || fail "Can't read entitlements: $candidate"
+        for forbidden in com.apple.developer.icloud com.apple.developer.aps-environment keychain-access-groups \
+            com.apple.security.cs.disable-library-validation; do
+            [[ "$entitlements" != *"$forbidden"* ]] || fail "Signed entitlements include $forbidden: $candidate"
+        done
     done < <(find "$app/Contents" -type f -perm -111)
     [[ "$count" -gt 0 ]] || fail "No code found to check"
     printf 'Checked %s Mach-O files.\n' "$count"
@@ -273,8 +277,9 @@ sign_code() {
 }
 
 # Sign from the inside out: loose libraries and helper executables, then nested
-# bundles deepest first, then the app. Nested bundles keep their own entitlements,
-# such as those of Sparkle's Downloader service.
+# bundles deepest first, then the app. --preserve-metadata=entitlements keeps any
+# entitlements a nested bundle already has. None has any today; Sparkle's Downloader
+# service ships with an empty entitlements dictionary.
 log "Signing nested code with: $IDENTITY"
 while IFS= read -r dylib; do
     sign_code "$dylib"

@@ -20,7 +20,8 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
     private let defaults: UserDefaults
     // A build without an update feed in its Info.plist, such as an organization's own signed build,
     // never starts Sparkle, so it can't check for or install another publisher's update.
-    private let hasUpdateFeed: Bool
+    // Views hide their update controls when this is false.
+    let hasUpdateFeed: Bool
     private var isUserInitiatedUpdateCheck = false
     private lazy var updaterController = SPUStandardUpdaterController(
         startingUpdater: false,
@@ -168,7 +169,9 @@ struct CheckForUpdatesView: View {
     @ObservedObject var updaterViewModel: UpdaterViewModel
 
     var body: some View {
-        Button("Check for Updates…", action: updaterViewModel.checkForUpdates)
-            .disabled(!updaterViewModel.canCheckForUpdates)
+        if updaterViewModel.hasUpdateFeed {
+            Button("Check for Updates…", action: updaterViewModel.checkForUpdates)
+                .disabled(!updaterViewModel.canCheckForUpdates)
+        }
     }
 }
