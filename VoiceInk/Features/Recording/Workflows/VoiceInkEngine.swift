@@ -470,6 +470,12 @@ class VoiceInkEngine: NSObject, ObservableObject {
                 String(localized: "Manage Modes"),
                 ModeSetupNavigator.openModesSettings
             )
+        case .unavailable(_, let model) where !CloudPolicy.isTranscriptionAllowed(model):
+            return (
+                CloudPolicyError.cloudTranscriptionDisabled.localizedDescription,
+                String(localized: "Manage AI Models"),
+                ModeSetupNavigator.openModelsSettings
+            )
         case .unavailable(let mode, let model), .available(let mode, let model):
             return (
                 String(

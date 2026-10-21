@@ -250,6 +250,7 @@ class AIService: ObservableObject {
     private lazy var localCLIService = LocalCLIService()
     private var apiKeyChangeObserver: NSObjectProtocol?
     private var settingsChangeObserver: NSObjectProtocol?
+    private var cloudPolicyObserver: NSObjectProtocol?
     private var voiceInkRefineObserver: AnyCancellable?
 
     @Published private var openRouterModels: [String] = []
@@ -260,6 +261,11 @@ class AIService: ObservableObject {
     var connectedProviders: [AIProvider] {
         AIProvider.allCases.filter { provider in
             guard provider.supportsEnhancement else {
+                return false
+            }
+
+            // Custom models are filtered per endpoint by CustomAIProviderManager.
+            guard provider == .custom || CloudPolicy.isEnhancementProviderAllowed(provider) else {
                 return false
             }
 
@@ -415,6 +421,15 @@ class AIService: ObservableObject {
         ) { [weak self] _ in
             self?.initializeAutoLearnSelectionIfNeeded()
         }
+
+        // Connected providers depend on cloud policy, so republish them when it changes.
+        cloudPolicyObserver = NotificationCenter.default.addObserver(
+            forName: .cloudPolicyDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.objectWillChange.send()
+        }
     }
 
     deinit {
@@ -423,6 +438,9 @@ class AIService: ObservableObject {
         }
         if let settingsChangeObserver {
             NotificationCenter.default.removeObserver(settingsChangeObserver)
+        }
+        if let cloudPolicyObserver {
+            NotificationCenter.default.removeObserver(cloudPolicyObserver)
         }
         voiceInkRefineObserver?.cancel()
     }
@@ -619,6 +637,15 @@ class AIService: ObservableObject {
     func verifyAPIKey(_ key: String, for provider: AIProvider, model: String? = nil) async -> (
         isValid: Bool, errorMessage: String?
     ) {
+        do {
+            try CloudPolicy.requireEnhancementProviderAllowed(
+                provider,
+                customBaseURL: provider == .custom ? provider.baseURL : nil
+            )
+        } catch {
+            return (false, error.localizedDescription)
+        }
+
         guard provider.requiresAPIKey else {
             return (true, nil)
         }
@@ -844,7 +871,7 @@ class AIService: ObservableObject {
 
     @MainActor
     func fetchOpenRouterModels() async {
-        guard !isOpenRouterCatalogRefreshing else { return }
+        guard CloudPolicy.isCloudAllowed, !isOpenRouterCatalogRefreshing else { return }
         isOpenRouterCatalogRefreshing = true
         defer { isOpenRouterCatalogRefreshing = false }
 

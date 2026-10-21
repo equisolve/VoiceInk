@@ -90,6 +90,14 @@ enum ModeRuntimeResolver {
             return .modelNotFound(mode: mode)
         }
 
+        // A mode set to a cloud model uses a local model while cloud services are off, or fails if none is downloaded.
+        guard CloudPolicy.isTranscriptionAllowed(model) else {
+            if let fallback = transcriptionModelManager.cloudPolicyFallbackModel {
+                return .available(mode: mode, model: fallback)
+            }
+            return .unavailable(mode: mode, model: model)
+        }
+
         guard transcriptionModelManager.usableModels.contains(where: {
             $0.selectionKey == model.selectionKey
         }) else {
@@ -211,6 +219,13 @@ enum ModeRuntimeResolver {
         if let providerName {
             guard let provider = AIProvider(rawValue: providerName) else {
                 return nil
+            }
+            // Keep a provider blocked by cloud policy so the request path refuses it and tells the user,
+            // rather than skipping enhancement without a word.
+            if !CloudPolicy.isCloudAllowed, provider.supportsEnhancement,
+                provider == .custom || !CloudPolicy.isEnhancementProviderAllowed(provider)
+            {
+                return provider
             }
             return aiService.connectedProviders.contains(provider) ? provider : nil
         }

@@ -17,6 +17,13 @@ extension AIService {
     ) async throws -> AIChatCompletionResult {
         let resolvedModel = modelName?.isEmpty == false ? modelName! : selectedModel(for: provider)
 
+        // Enhancement, assistant, and Auto-Learn requests all pass here, so refuse blocked providers before any network call.
+        try CloudPolicy.requireEnhancementProviderAllowed(
+            provider,
+            customBaseURL: provider == .custom
+                ? CustomAIProviderManager.shared.requestConfiguration(forModel: resolvedModel)?.baseURL : nil
+        )
+
         let result: String
         var openRouterCompletion: OpenRouterCompletion? = nil
         switch provider {

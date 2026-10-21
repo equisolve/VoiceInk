@@ -156,6 +156,8 @@ class StreamingTranscriptionService {
 
     /// Start a streaming transcription session for the given model.
     func startStreaming(model: any TranscriptionModel, context: TranscriptionRequestContext) async throws {
+        try CloudPolicy.requireTranscriptionAllowed(model.provider)
+
         let start = Date()
         state = .connecting
         committedSegments = []
