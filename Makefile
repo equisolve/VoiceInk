@@ -2,6 +2,13 @@
 DEPS_DIR := $(HOME)/VoiceInk-Dependencies
 WHISPER_CPP_DIR := $(DEPS_DIR)/whisper.cpp
 FRAMEWORK_PATH := $(WHISPER_CPP_DIR)/build-apple/whisper.xcframework
+# whisper.cpp is pinned to one release. The tag must resolve to the commit, or the build stops.
+# To update it, see "Updating pinned dependencies" in BUILDING.md.
+WHISPER_CPP_REPO := https://github.com/ggml-org/whisper.cpp.git
+WHISPER_CPP_TAG := v1.9.5
+WHISPER_CPP_COMMIT := d1be6fde11ac6e0407606b4e42fe72d34add8037
+# Records which commit the framework was built from, so changing the pin triggers a rebuild.
+WHISPER_BUILD_STAMP := $(WHISPER_CPP_DIR)/build-apple/.voiceink-whisper-commit
 LOCAL_DERIVED_DATA := $(CURDIR)/.local-build
 LOCAL_CODESIGN_IDENTITY ?=
 RUN_APP_NAME ?= VoiceInk
@@ -28,16 +35,23 @@ healthcheck: check
 # Build process
 whisper:
 	@mkdir -p $(DEPS_DIR)
-	@if [ ! -d "$(FRAMEWORK_PATH)" ]; then \
-		echo "Building whisper.xcframework in $(DEPS_DIR)..."; \
-		if [ ! -d "$(WHISPER_CPP_DIR)" ]; then \
-			git clone https://github.com/ggerganov/whisper.cpp.git $(WHISPER_CPP_DIR); \
-		else \
-			(cd $(WHISPER_CPP_DIR) && git pull); \
-		fi; \
-		cd $(WHISPER_CPP_DIR) && ./build-xcframework.sh; \
+	@if [ -d "$(FRAMEWORK_PATH)" ] && [ "$$(cat "$(WHISPER_BUILD_STAMP)" 2>/dev/null)" = "$(WHISPER_CPP_COMMIT)" ]; then \
+		echo "whisper.xcframework $(WHISPER_CPP_TAG) already built in $(DEPS_DIR), skipping build"; \
 	else \
-		echo "whisper.xcframework already built in $(DEPS_DIR), skipping build"; \
+		echo "Building whisper.xcframework $(WHISPER_CPP_TAG) ($(WHISPER_CPP_COMMIT)) in $(DEPS_DIR)..."; \
+		if [ ! -d "$(WHISPER_CPP_DIR)/.git" ]; then \
+			git clone --no-checkout $(WHISPER_CPP_REPO) $(WHISPER_CPP_DIR) || exit 1; \
+		fi; \
+		cd $(WHISPER_CPP_DIR) || exit 1; \
+		git fetch --no-tags $(WHISPER_CPP_REPO) "refs/tags/$(WHISPER_CPP_TAG):refs/tags/$(WHISPER_CPP_TAG)" || exit 1; \
+		TAG_COMMIT=$$(git rev-parse "$(WHISPER_CPP_TAG)^{commit}"); \
+		if [ "$$TAG_COMMIT" != "$(WHISPER_CPP_COMMIT)" ]; then \
+			echo "whisper.cpp tag $(WHISPER_CPP_TAG) points to $$TAG_COMMIT, expected $(WHISPER_CPP_COMMIT)"; \
+			exit 1; \
+		fi; \
+		git -c advice.detachedHead=false checkout "$(WHISPER_CPP_COMMIT)" || exit 1; \
+		./build-xcframework.sh || exit 1; \
+		echo "$(WHISPER_CPP_COMMIT)" > "$(WHISPER_BUILD_STAMP)"; \
 	fi
 
 setup: whisper
@@ -46,6 +60,7 @@ setup: whisper
 
 build: setup
 	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Debug CODE_SIGN_IDENTITY="" \
+		-onlyUsePackageVersionsFromResolvedFile \
 		-skipPackagePluginValidation \
 		-skipMacroValidation \
 		build
@@ -81,6 +96,7 @@ local: check setup
 		DEVELOPMENT_TEAM="" \
 		CODE_SIGN_ENTITLEMENTS="$(CURDIR)/VoiceInk/VoiceInk.local.entitlements" \
 		SWIFT_ACTIVE_COMPILATION_CONDITIONS='$$(inherited) LOCAL_BUILD' \
+		-onlyUsePackageVersionsFromResolvedFile \
 		-skipPackagePluginValidation \
 		-skipMacroValidation \
 		build

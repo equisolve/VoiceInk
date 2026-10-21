@@ -101,6 +101,16 @@ class FluidAudioTranscriptionService: TranscriptionService {
                     "Parakeet model files are incomplete. Download the model from AI Models."
                 )
             }
+            if let pinnedRepository = PinnedFluidAudioModels.repository(for: version) {
+                // Deletes the files and throws when any hash differs from the pinned value. Loads from disk only,
+                // so FluidAudio cannot replace the verified files with an unverified download.
+                try await PinnedFluidAudioModels.ensureVerified(pinnedRepository, at: cacheDirectory)
+                return try AsrModels.loadLocal(
+                    from: cacheDirectory,
+                    version: version,
+                    encoderPrecision: .int8
+                )
+            }
             return try await AsrModels.load(
                 from: cacheDirectory,
                 configuration: nil,
@@ -256,7 +266,9 @@ class FluidAudioTranscriptionService: TranscriptionService {
 
     private func getOrLoadVadManager() async throws -> VadManager {
         if let vadManager { return vadManager }
-        let manager = try await VadManager(config: VadConfig(defaultThreshold: 0.7))
+        let manager = try await PinnedFluidAudioModels.loadVerifiedVadManager(
+            config: VadConfig(defaultThreshold: 0.7)
+        )
         vadManager = manager
         return manager
     }

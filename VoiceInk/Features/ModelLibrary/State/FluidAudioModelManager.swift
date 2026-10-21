@@ -271,6 +271,8 @@ class FluidAudioModelManager: ObservableObject {
                 guard let repo = Self.parakeetRepo(for: version) else {
                     throw AsrModelsError.loadingFailed("Unsupported Parakeet model version.")
                 }
+                PinnedFluidAudioModels.installRevisionPins()
+                let pinnedRepository = PinnedFluidAudioModels.repository(for: version)
                 let cacheDirectory = AsrModels.defaultCacheDirectory(for: version)
                 preserveModelFiles = AsrModels.modelsExist(at: cacheDirectory, version: version)
                 try await ModelHub.download(
@@ -282,19 +284,31 @@ class FluidAudioModelManager: ObservableObject {
                 )
                 preserveModelFiles = true
                 try Task.checkCancellation()
-                try await ModelHub.download(
-                    .vad,
-                    to: Self.fluidAudioModelsRootDirectory()
-                )
+                if let pinnedRepository {
+                    // Deletes the files and throws when any hash differs from the pinned value.
+                    try await PinnedFluidAudioModels.ensureVerified(pinnedRepository, at: cacheDirectory)
+                    logger.notice(
+                        "Verified \(pinnedRepository.remotePath, privacy: .public) at \(pinnedRepository.revision, privacy: .public)"
+                    )
+                }
+                try await PinnedFluidAudioModels.prepareVad()
                 try Task.checkCancellation()
                 beginModelPreparation(for: modelName, downloadID: downloadID)
-                _ = try await AsrModels.load(
-                    from: cacheDirectory,
-                    version: version,
-                    encoderPrecision: .int8
-                )
+                if pinnedRepository != nil {
+                    _ = try AsrModels.loadLocal(
+                        from: cacheDirectory,
+                        version: version,
+                        encoderPrecision: .int8
+                    )
+                } else {
+                    _ = try await AsrModels.load(
+                        from: cacheDirectory,
+                        version: version,
+                        encoderPrecision: .int8
+                    )
+                }
                 try Task.checkCancellation()
-                _ = try await VadManager()
+                _ = try await PinnedFluidAudioModels.loadVerifiedVadManager()
                 try Task.checkCancellation()
             }
             try Task.checkCancellation()
@@ -307,6 +321,14 @@ class FluidAudioModelManager: ObservableObject {
                 modelStateRevision += 1
             } else {
                 logger.error("❌ FluidAudio download failed for \(modelName, privacy: .public): \(error, privacy: .public)")
+                if error is PinnedModelVerificationError {
+                    modelStateRevision += 1
+                    NotificationManager.shared.showNotification(
+                        title: error.localizedDescription,
+                        type: .error,
+                        duration: 8.0
+                    )
+                }
             }
         }
     }

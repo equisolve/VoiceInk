@@ -257,6 +257,7 @@ else
             -project "$PROJECT_PATH" \
             -scheme "$SCHEME" \
             -configuration Release \
+            -onlyUsePackageVersionsFromResolvedFile \
             -archivePath "$ARCHIVE_PATH"
     fi
 
