@@ -24,6 +24,29 @@ final class OnboardingFlowController {
         coordinator.storedStage = OnboardingStage.model.rawValue
     }
 
+    func continueFromMicrophoneStep(enhancementService: AIEnhancementService) {
+        guard coordinator.stageAfterMicrophone == .experience else {
+            goToModelStep()
+            return
+        }
+
+        // Managed setup reaches here only with a model that can run now.
+        goToExperienceStep(isTranscriptionSetupReady: true, enhancementService: enhancementService)
+    }
+
+    func continueFromModelStep(
+        isTranscriptionSetupReady: Bool,
+        aiService: AIService,
+        enhancementService: AIEnhancementService
+    ) {
+        guard coordinator.stageAfterModel == .experience else {
+            goToAPIStep(isTranscriptionSetupReady: isTranscriptionSetupReady, aiService: aiService)
+            return
+        }
+
+        goToExperienceStep(isTranscriptionSetupReady: isTranscriptionSetupReady, enhancementService: enhancementService)
+    }
+
     func goToAPIStep(
         isTranscriptionSetupReady: Bool,
         aiService: AIService
@@ -128,7 +151,7 @@ final class OnboardingFlowController {
                 enhancementService: enhancementService
             )
         } else {
-            coordinator.storedStage = OnboardingStage.api.rawValue
+            coordinator.storedStage = coordinator.stageBeforeExperience.rawValue
         }
     }
 
@@ -258,6 +281,12 @@ final class OnboardingFlowController {
             goToPermissionsStep()
         }
 
+        // A profile with managed defaults can arrive while the API key screen is showing. The model screen stays,
+        // since managed setup waits there for a model to download.
+        if coordinator.stage == .api && coordinator.isManagedSetup {
+            goToFirstIncompleteSetupStep(isTranscriptionSetupReady: isTranscriptionSetupReady)
+        }
+
         if coordinator.stage == .model
             && (!coordinator.requiredPermissionsGranted || !coordinator.hasSelectedOnboardingMicrophone)
         {
@@ -300,7 +329,8 @@ final class OnboardingFlowController {
         } else if !isTranscriptionSetupReady {
             coordinator.storedStage = OnboardingStage.model.rawValue
         } else {
-            coordinator.storedStage = OnboardingStage.api.rawValue
+            coordinator.storedStage = coordinator.isManagedSetup
+                ? OnboardingStage.experience.rawValue : OnboardingStage.api.rawValue
         }
     }
 

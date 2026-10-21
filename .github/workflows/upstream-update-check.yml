@@ -1,0 +1,45 @@
+name: Upstream update check
+
+# Weekly check for upstream VoiceInk releases newer than UPSTREAM_VERSION and
+# for published security advisories. Opens, updates, or closes one issue
+# labeled upstream-update. See "Keeping VoiceInk updated" in BUILDING.md.
+
+on:
+  schedule:
+    # Mondays at 14:17 UTC, off the top of the hour when GitHub delays
+    # scheduled runs.
+    - cron: "17 14 * * 1"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the issue body without changing issues"
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: upstream-update-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check upstream releases and advisories
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          if [ "$DRY_RUN" = "true" ]; then
+            scripts/check-upstream-updates.sh --dry-run
+          else
+            scripts/check-upstream-updates.sh
+          fi

@@ -2,7 +2,10 @@ import AppKit
 import SwiftUI
 
 struct OnboardingTranscriptionSetupCard: View {
+    @ObservedObject private var cloudPolicyMonitor = CloudPolicyMonitor.shared
     let localModel: FluidAudioModel?
+    /// Set in managed setup: the card offers only this model's download.
+    var managedModel: OnboardingManagedModel?
     let setupKind: OnboardingTranscriptionSetupKind
     let providerOptions: [any CloudProvider]
     @Binding var selectedProviderKey: String
@@ -44,13 +47,32 @@ struct OnboardingTranscriptionSetupCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
-            setupSwitcher
+            if let managedModel {
+                ManagedByOrganizationCaption(
+                    title: "Managed by your organization",
+                    message: managedModel.isOrganizationChoice
+                        ? "Your organization chose this model. Continue when the download finishes."
+                        : "Download this model to continue.")
 
-            switch setupKind {
-            case .local:
-                localSetup
-            case .cloud:
-                cloudSetup
+                if managedModel.model is FluidAudioModel {
+                    localSetup
+                } else {
+                    ManagedModelDownloadCard(model: managedModel.model)
+                }
+            } else {
+                if CloudPolicy.isCloudAllowed {
+                    setupSwitcher
+                } else {
+                    ManagedByOrganizationCaption(
+                        message: "Cloud transcription is off. Download a local model to continue.")
+                }
+
+                switch setupKind {
+                case .local:
+                    localSetup
+                case .cloud:
+                    cloudSetup
+                }
             }
         }
         .onAppear {
@@ -392,7 +414,7 @@ struct OnboardingTranscriptionSetupCard: View {
         let providerKey = selectedProvider.providerKey
 
         Task {
-            let result = await selectedProvider.verifyAPIKey(key)
+            let result = await selectedProvider.verifyAPIKeyIfCloudAllowed(key)
 
             await MainActor.run {
                 isVerifying = false

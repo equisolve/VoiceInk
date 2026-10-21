@@ -157,6 +157,7 @@ struct OnboardingStepScreen<Content: View, BottomBar: View>: View {
 
     init(
         stage: OnboardingStage,
+        subtitle: String? = nil,
         contentMaxWidth: CGFloat,
         showsHeader: Bool = true,
         contentYOffset: CGFloat = 0,
@@ -165,7 +166,7 @@ struct OnboardingStepScreen<Content: View, BottomBar: View>: View {
     ) {
         self.systemImage = stage.systemImage
         self.title = stage.title
-        self.subtitle = stage.subtitle
+        self.subtitle = subtitle ?? stage.subtitle
         self.contentMaxWidth = contentMaxWidth
         self.showsHeader = showsHeader
         self.contentYOffset = contentYOffset

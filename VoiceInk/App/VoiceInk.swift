@@ -6,6 +6,20 @@ import SwiftData
 import SwiftUI
 
 @main
+enum VoiceInkLauncher {
+    static func main() {
+        guard ProcessInfo.processInfo.isRunningUnitTests else {
+            VoiceInkApp.main()
+            return
+        }
+
+        // Unit tests need a running app to host them, not VoiceInk's windows, menu bar item, or launch work.
+        AppDefaults.registerDefaults()
+        NSApplication.shared.setActivationPolicy(.prohibited)
+        NSApplication.shared.run()
+    }
+}
+
 struct VoiceInkApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     let container: ModelContainer
@@ -34,6 +48,9 @@ struct VoiceInkApp: App {
 
     // Transcription auto-cleanup service for zero data retention
     private let transcriptionAutoCleanupService = TranscriptionAutoCleanupService.shared
+
+    // Applies defaults and model downloads from an organization's configuration profile
+    private let managedDefaultsApplier: ManagedDefaultsApplier
 
     // Model prewarm service for optimizing model on wake from sleep
     @StateObject private var prewarmService: ModelPrewarmService
@@ -151,6 +168,17 @@ struct VoiceInkApp: App {
         whisperModelManager.loadAvailableModels()
         transcriptionModelManager.refreshAllAvailableModels()
         transcriptionModelManager.loadCurrentTranscriptionModel()
+        CloudPolicyMonitor.shared.start()
+
+        managedDefaultsApplier = ManagedDefaultsApplier(
+            target: LiveManagedDefaultsTarget(
+                transcriptionModelManager: transcriptionModelManager,
+                whisperModelManager: whisperModelManager,
+                fluidAudioModelManager: fluidAudioModelManager,
+                aiService: aiService
+            )
+        )
+        managedDefaultsApplier.start()
 
         _whisperModelManager = State(initialValue: whisperModelManager)
         _fluidAudioModelManager = State(initialValue: fluidAudioModelManager)
@@ -370,6 +398,7 @@ struct VoiceInkApp: App {
                         }
                 } else {
                     OnboardingView(hasCompletedOnboardingV2: $hasCompletedOnboardingV2)
+                        .environmentObject(whisperModelManager)
                         .environmentObject(fluidAudioModelManager)
                         .environmentObject(transcriptionModelManager)
                         .environmentObject(aiService)

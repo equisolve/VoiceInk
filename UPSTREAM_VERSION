@@ -1,0 +1,4 @@
+# The Beingpax/VoiceInk release tag this fork is based on.
+# The monthly update pull request that merges a new upstream release changes
+# this line to that release's tag. scripts/check-upstream-updates.sh reads it.
+v2.21

@@ -13,7 +13,8 @@ LOCAL_DERIVED_DATA := $(CURDIR)/.local-build
 LOCAL_CODESIGN_IDENTITY ?=
 RUN_APP_NAME ?= VoiceInk
 
-.PHONY: all clean whisper setup build local check healthcheck help dev run release release-setup
+.PHONY: all clean whisper setup build local check healthcheck help dev run release release-setup \
+	equisolve-release equisolve-release-setup
 
 # Default target
 all: check build
@@ -153,6 +154,14 @@ release: whisper
 release-setup:
 	@./scripts/setup-release-notarization.sh
 
+# Equisolve's release: com.equisolve.VoiceInk, Developer ID signed, notarized, no update feed.
+equisolve-release: check whisper
+	@./scripts/equisolve-release.sh $(EQUISOLVE_RELEASE_ARGS)
+
+# Store Equisolve's notarization credentials in the Keychain.
+equisolve-release-setup:
+	@./scripts/equisolve-release.sh --setup-notarization
+
 # Cleanup
 clean:
 	@echo "Cleaning build artifacts..."
@@ -172,6 +181,9 @@ help:
 	@echo "  dev                Build and run the app (for development)"
 	@echo "  release            Build DMG and Appcast using release-notes/<version>.html"
 	@echo "  release-setup      Store notarization credentials in Keychain"
+	@echo "  equisolve-release  Build, sign, and notarize Equisolve's release (com.equisolve.VoiceInk)"
+	@echo "    EQUISOLVE_RELEASE_ARGS=\"--skip-notarization --allow-dirty\" passes options to the script"
+	@echo "  equisolve-release-setup  Store Equisolve's notarization credentials in Keychain"
 	@echo "  all                Run full build process (default)"
 	@echo "  clean              Remove build artifacts"
 	@echo "  help               Show this help message"

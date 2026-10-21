@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 
 struct LocalEnhancementServiceManagementView: View {
+    @ObservedObject private var cloudPolicyMonitor = CloudPolicyMonitor.shared
     @EnvironmentObject private var aiService: AIService
 
     @State private var isOllamaExpanded = false
@@ -36,20 +37,27 @@ struct LocalEnhancementServiceManagementView: View {
                     ollamaConfiguration
                 }
 
-                Divider()
-                    .padding(.leading, 58)
+                // The CLI provider runs an arbitrary command that can call cloud services, so cloud policy hides it.
+                if CloudPolicy.isEnhancementProviderAllowed(.localCLI) {
+                    Divider()
+                        .padding(.leading, 58)
 
-                LocalProviderDisclosureRow(
-                    title: Text("CLI Provider"),
-                    subtitle: Text("Claude, Codex, scripts, or any command"),
-                    systemImage: "terminal",
-                    statusTitle: isLocalCLIConfigured ? Text("Configured") : Text("Not configured"),
-                    isExpanded: $isLocalCLIExpanded
-                ) {
-                    localCLIConfiguration
+                    LocalProviderDisclosureRow(
+                        title: Text("CLI Provider"),
+                        subtitle: Text("Claude, Codex, scripts, or any command"),
+                        systemImage: "terminal",
+                        statusTitle: isLocalCLIConfigured ? Text("Configured") : Text("Not configured"),
+                        isExpanded: $isLocalCLIExpanded
+                    ) {
+                        localCLIConfiguration
+                    }
                 }
             }
             .background(AppMaterialCardBackground(cornerRadius: 11))
+
+            if !CloudPolicy.isCloudAllowed {
+                ManagedByOrganizationCaption(message: "The CLI provider is off because the command it runs can reach cloud services.")
+            }
         }
         .onAppear {
             selectedOllamaModel = aiService.selectedModel(for: .ollama)
@@ -117,6 +125,11 @@ struct LocalEnhancementServiceManagementView: View {
                     .font(.caption)
                     .foregroundStyle(AppTheme.Status.error)
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.leading, LocalProviderMetrics.labelWidth + 12)
+            }
+
+            if !CloudPolicy.isCloudAllowed {
+                ManagedByOrganizationCaption(message: "The server must run on this Mac (localhost, 127.0.0.1, or ::1).")
                     .padding(.leading, LocalProviderMetrics.labelWidth + 12)
             }
 

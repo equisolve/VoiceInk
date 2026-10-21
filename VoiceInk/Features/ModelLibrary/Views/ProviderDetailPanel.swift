@@ -464,7 +464,7 @@ struct ProviderDetailPanel: View {
         Task {
             let result: (isValid: Bool, errorMessage: String?)
             if let cloudProvider = descriptor.cloudProvider {
-                result = await cloudProvider.verifyAPIKey(trimmedKey)
+                result = await cloudProvider.verifyAPIKeyIfCloudAllowed(trimmedKey)
             } else if let provider = descriptor.aiProvider {
                 result = await aiService.verifyAPIKey(
                     trimmedKey,

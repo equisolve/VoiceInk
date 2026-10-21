@@ -90,6 +90,14 @@ enum ModeRuntimeResolver {
             return .modelNotFound(mode: mode)
         }
 
+        // A mode set to a cloud model uses a local model while cloud services are off, or fails if none is downloaded.
+        guard CloudPolicy.isTranscriptionAllowed(model) else {
+            if let fallback = transcriptionModelManager.cloudPolicyFallbackModel {
+                return .available(mode: mode, model: fallback)
+            }
+            return .unavailable(mode: mode, model: model)
+        }
+
         guard transcriptionModelManager.usableModels.contains(where: {
             $0.selectionKey == model.selectionKey
         }) else {
@@ -153,6 +161,7 @@ enum ModeRuntimeResolver {
         let mode = mode ?? ModeManager.shared.currentEffectiveConfiguration
         let provider = resolvedProvider(
             providerName: mode?.selectedAIProvider,
+            configuredModelName: mode?.selectedAIModel,
             aiService: aiService
         )
         let prompt =
@@ -204,13 +213,34 @@ enum ModeRuntimeResolver {
         return enhancementService.allPrompts.first { $0.id == uuid }
     }
 
-    private static func resolvedProvider(
+    static func resolvedProvider(
         providerName: String?,
+        configuredModelName: String? = nil,
         aiService: AIService
     ) -> AIProvider? {
         if let providerName {
             guard let provider = AIProvider(rawValue: providerName) else {
                 return nil
+            }
+            if !CloudPolicy.isCloudAllowed, provider.supportsEnhancement {
+                let isBlocked: Bool
+                if provider == .custom {
+                    let baseURL = configuredModelName.flatMap {
+                        CustomAIProviderManager.shared.requestConfiguration(forModel: $0)?.baseURL
+                    }
+                    isBlocked = !CloudPolicy.isEnhancementProviderAllowed(.custom, customBaseURL: baseURL)
+                } else {
+                    isBlocked = !CloudPolicy.isEnhancementProviderAllowed(provider)
+                }
+
+                // Use the organization's provider in place of a blocked one. Without it, keep the blocked provider
+                // so the request path refuses it and tells the user, rather than skipping enhancement without a word.
+                if isBlocked {
+                    return CloudPolicy.isEnhancementProviderAllowed(.managed) ? .managed : provider
+                }
+                if provider == .custom {
+                    return provider
+                }
             }
             return aiService.connectedProviders.contains(provider) ? provider : nil
         }
