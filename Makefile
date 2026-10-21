@@ -49,7 +49,13 @@ whisper:
 			echo "whisper.cpp tag $(WHISPER_CPP_TAG) points to $$TAG_COMMIT, expected $(WHISPER_CPP_COMMIT)"; \
 			exit 1; \
 		fi; \
-		git -c advice.detachedHead=false checkout "$(WHISPER_CPP_COMMIT)" || exit 1; \
+		git -c advice.detachedHead=false checkout --force "$(WHISPER_CPP_COMMIT)" || exit 1; \
+		git reset --hard "$(WHISPER_CPP_COMMIT)" || exit 1; \
+		git clean -fdxq || exit 1; \
+		if [ -n "$$(git status --porcelain)" ]; then \
+			echo "whisper.cpp checkout in $(WHISPER_CPP_DIR) has local changes after cleaning; remove the directory and run make whisper again"; \
+			exit 1; \
+		fi; \
 		./build-xcframework.sh || exit 1; \
 		echo "$(WHISPER_CPP_COMMIT)" > "$(WHISPER_BUILD_STAMP)"; \
 	fi

@@ -148,7 +148,34 @@ class FluidAudioModelManager: ObservableObject {
         return Language(rawValue: languageCode)
     }
 
-    init() {}
+    private var pinnedModelRemovedObserver: NSObjectProtocol?
+
+    init() {
+        // Verification can delete a model folder from a download, a transcription, or a VAD load. Refresh the model
+        // list whichever one did it.
+        pinnedModelRemovedObserver = NotificationCenter.default.addObserver(
+            forName: .pinnedFluidAudioModelRemoved,
+            object: nil,
+            queue: .main
+        ) { [weak self] notification in
+            let error = notification.userInfo?[pinnedModelErrorKey] as? Error
+            MainActor.assumeIsolated {
+                self?.handlePinnedModelRemoved(error: error)
+            }
+        }
+    }
+
+    private func handlePinnedModelRemoved(error: Error?) {
+        modelStateRevision += 1
+        onModelsChanged?()
+        guard let error else { return }
+        logger.error("Pinned model failed verification and was removed: \(error.localizedDescription, privacy: .public)")
+        NotificationManager.shared.showNotification(
+            title: error.localizedDescription,
+            type: .error,
+            duration: 8.0
+        )
+    }
 
     // MARK: - Query helpers
 
@@ -275,13 +302,26 @@ class FluidAudioModelManager: ObservableObject {
                 let pinnedRepository = PinnedFluidAudioModels.repository(for: version)
                 let cacheDirectory = AsrModels.defaultCacheDirectory(for: version)
                 preserveModelFiles = AsrModels.modelsExist(at: cacheDirectory, version: version)
-                try await ModelHub.download(
-                    repo,
-                    to: cacheDirectory.deletingLastPathComponent(),
-                    variant: version == .v3 ? ParakeetEncoderPrecision.int8.rawValue : nil,
-                    additionalModelNames: [ModelNames.ASR.vocabularyFile],
-                    progressHandler: Self.downloadOnlyProgressHandler(forwarding: progressHandler)
-                )
+                // An install that already matches the pinned hashes is kept. Without this check, FluidAudio would
+                // delete an install made before the pin, because it has no revision marker, and download it again.
+                var needsDownload = true
+                if let pinnedRepository {
+                    needsDownload = !(await PinnedFluidAudioModels.verifyExistingInstall(
+                        pinnedRepository,
+                        at: cacheDirectory
+                    ))
+                }
+                if needsDownload {
+                    try await ModelHub.download(
+                        repo,
+                        to: cacheDirectory.deletingLastPathComponent(),
+                        variant: version == .v3 ? ParakeetEncoderPrecision.int8.rawValue : nil,
+                        additionalModelNames: [ModelNames.ASR.vocabularyFile],
+                        progressHandler: Self.downloadOnlyProgressHandler(forwarding: progressHandler)
+                    )
+                } else {
+                    logger.notice("Existing Parakeet files match the pinned hashes; skipping download")
+                }
                 preserveModelFiles = true
                 try Task.checkCancellation()
                 if let pinnedRepository {
@@ -295,11 +335,14 @@ class FluidAudioModelManager: ObservableObject {
                 try Task.checkCancellation()
                 beginModelPreparation(for: modelName, downloadID: downloadID)
                 if pinnedRepository != nil {
-                    _ = try AsrModels.loadLocal(
-                        from: cacheDirectory,
-                        version: version,
-                        encoderPrecision: .int8
-                    )
+                    // Core ML compiles the model on its first load, which takes seconds; keep that off the main actor.
+                    try await Task.detached(priority: .userInitiated) {
+                        _ = try AsrModels.loadLocal(
+                            from: cacheDirectory,
+                            version: version,
+                            encoderPrecision: .int8
+                        )
+                    }.value
                 } else {
                     _ = try await AsrModels.load(
                         from: cacheDirectory,
@@ -320,15 +363,9 @@ class FluidAudioModelManager: ObservableObject {
                 }
                 modelStateRevision += 1
             } else {
+                // A verification failure has already refreshed the model state and told the user, through
+                // handlePinnedModelRemoved.
                 logger.error("❌ FluidAudio download failed for \(modelName, privacy: .public): \(error, privacy: .public)")
-                if error is PinnedModelVerificationError {
-                    modelStateRevision += 1
-                    NotificationManager.shared.showNotification(
-                        title: error.localizedDescription,
-                        type: .error,
-                        duration: 8.0
-                    )
-                }
             }
         }
     }

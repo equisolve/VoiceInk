@@ -152,18 +152,22 @@ final class VoiceInkRefineModelDownloader: @unchecked Sendable {
             return true
         }
 
-        do {
-            for file in files {
-                try validateDownloadedFile(
-                    at: snapshotDirectory.appendingPathComponent(file.path),
-                    file: file
+        for file in files {
+            let url = snapshotDirectory.appendingPathComponent(file.path)
+            do {
+                try validateDownloadedFile(at: url, file: file)
+            } catch {
+                // Fail closed: remove the file that doesn't match, so the install reads as not downloaded without
+                // being hashed again on every refresh, and the next download replaces only that file.
+                try? FileManager.default.removeItem(at: url)
+                try? FileManager.default.removeItem(
+                    at: snapshotDirectory.appendingPathComponent(verificationRecordFilename)
                 )
+                return false
             }
-            try? persistVerificationRecord(currentRecord, at: snapshotDirectory)
-            return true
-        } catch {
-            return false
         }
+        try? persistVerificationRecord(currentRecord, at: snapshotDirectory)
+        return true
     }
 
     private let repositoryID: String

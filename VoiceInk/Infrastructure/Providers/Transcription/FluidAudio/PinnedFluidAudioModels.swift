@@ -48,6 +48,15 @@ enum PinnedModelVerificationError: LocalizedError {
     }
 }
 
+extension Notification.Name {
+    /// Posted, from any thread, after VoiceInk deletes a pinned model folder that failed verification. When the user
+    /// should be told, `userInfo[pinnedModelErrorKey]` holds the error. It is absent when VoiceInk downloads the model
+    /// again right away.
+    static let pinnedFluidAudioModelRemoved = Notification.Name("VoiceInkPinnedFluidAudioModelRemoved")
+}
+
+let pinnedModelErrorKey = "error"
+
 /// Fixes the FluidAudio models VoiceInk downloads to exact Hugging Face commits and checks every
 /// downloaded file against a hard-coded SHA-256 before the model is loaded.
 ///
@@ -143,27 +152,65 @@ enum PinnedFluidAudioModels {
     /// Ensures `directory` holds exactly the pinned files with the pinned hashes.
     ///
     /// A matching verification record from an earlier full check is accepted when every file still has its recorded
-    /// size and modification time. Otherwise every file is hashed. On any mismatch the directory is deleted and the
-    /// error is rethrown. Runs off the calling actor.
+    /// size and modification time. Otherwise every file is hashed. On any mismatch the directory is deleted, the
+    /// `pinnedFluidAudioModelRemoved` notification is posted with the error so the user is told, and the error is
+    /// rethrown. Runs off the calling actor.
     static func ensureVerified(_ repository: PinnedModelRepository, at directory: URL) async throws {
         try await Task.detached(priority: .userInitiated) {
-            if hasValidRecord(repository, at: directory) {
-                return
-            }
-            try verifyOrDelete(repository, at: directory)
+            try verifyIfNeeded(repository, at: directory, reportFailure: true)
         }.value
     }
 
-    /// Hashes every pinned file and rejects any file that is not pinned. Writes a verification record on success.
-    /// On failure deletes `directory` and rethrows.
-    static func verifyOrDelete(_ repository: PinnedModelRepository, at directory: URL) throws {
-        do {
-            try verifyContents(repository, at: directory)
-        } catch {
-            try? FileManager.default.removeItem(at: directory)
-            throw error
+    /// Checks an install that is already on disk before a download, so a matching install is kept instead of being
+    /// downloaded again. Returns false when any pinned file is missing, or when verification fails, in which case the
+    /// directory is deleted and `pinnedFluidAudioModelRemoved` is posted without an error, because the caller
+    /// downloads the model again right away. Runs off the calling actor.
+    static func verifyExistingInstall(_ repository: PinnedModelRepository, at directory: URL) async -> Bool {
+        guard allFilesPresent(repository, at: directory) else {
+            return false
         }
-        try persistRecord(for: repository, at: directory)
+        let verified: Void? = try? await Task.detached(priority: .userInitiated) {
+            try verifyIfNeeded(repository, at: directory, reportFailure: false)
+        }.value
+        return verified != nil
+    }
+
+    /// Hashes every pinned file and rejects any file that is not pinned, unless a valid verification record makes
+    /// that unnecessary. On success writes the verification record and FluidAudio's revision marker, so FluidAudio
+    /// treats the folder as a download of the pinned commit and keeps it. On failure deletes `directory`, posts
+    /// `pinnedFluidAudioModelRemoved`, and rethrows.
+    private static func verifyIfNeeded(
+        _ repository: PinnedModelRepository,
+        at directory: URL,
+        reportFailure: Bool
+    ) throws {
+        if !hasValidRecord(repository, at: directory) {
+            do {
+                try verifyContents(repository, at: directory)
+            } catch {
+                try? FileManager.default.removeItem(at: directory)
+                NotificationCenter.default.post(
+                    name: .pinnedFluidAudioModelRemoved,
+                    object: nil,
+                    userInfo: reportFailure ? [pinnedModelErrorKey: error] : nil
+                )
+                throw error
+            }
+            try persistRecord(for: repository, at: directory)
+        }
+        try writeRevisionMarkerIfNeeded(for: repository, at: directory)
+    }
+
+    /// FluidAudio deletes a model folder before downloading when its marker names a different commit, or when there
+    /// is no marker and the pinned commit is not `main`. Installs made before the pin have no marker.
+    private static func writeRevisionMarkerIfNeeded(for repository: PinnedModelRepository, at directory: URL) throws {
+        let marker = directory.appendingPathComponent(fluidAudioRevisionMarker)
+        let stored = (try? String(contentsOf: marker, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard stored != repository.revision else {
+            return
+        }
+        try Data((repository.revision + "\n").utf8).write(to: marker, options: .atomic)
     }
 
     /// True when every pinned file is present, whatever its contents. Used to decide whether to check an existing
@@ -330,12 +377,7 @@ enum PinnedFluidAudioModels {
     static func prepareVad(progressHandler: ProgressHandler? = nil) async throws {
         installRevisionPins()
         let directory = vadDirectory
-        if hasValidRecord(vad, at: directory) {
-            return
-        }
-        if allFilesPresent(vad, at: directory),
-            (try? await ensureVerified(vad, at: directory)) != nil
-        {
+        if await verifyExistingInstall(vad, at: directory) {
             return
         }
         try await ModelHub.download(.vad, to: fluidAudioModelsRootDirectory, progressHandler: progressHandler)
