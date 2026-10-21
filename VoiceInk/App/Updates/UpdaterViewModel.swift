@@ -145,7 +145,7 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
         defaults.set(versions, forKey: DefaultsKey.interactedUpdateVersions)
     }
 
-    static func bundleHasUpdateFeed(_ bundle: Bundle) -> Bool {
+    nonisolated static func bundleHasUpdateFeed(_ bundle: Bundle) -> Bool {
         guard let feed = bundle.object(forInfoDictionaryKey: "SUFeedURL") as? String else { return false }
         return !feed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
