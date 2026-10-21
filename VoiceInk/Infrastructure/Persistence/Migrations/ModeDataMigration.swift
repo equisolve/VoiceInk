@@ -2,7 +2,7 @@ import Foundation
 
 extension ModeManager {
     func migratedModeConfigurationData(for configKey: String) -> Data? {
-        let defaults = UserDefaults.standard
+        let defaults = AppPreferences.defaults
         if let data = defaults.data(forKey: configKey) {
             return data
         }

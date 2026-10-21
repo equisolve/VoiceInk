@@ -18,10 +18,13 @@ extension AIService {
         let resolvedModel = modelName?.isEmpty == false ? modelName! : selectedModel(for: provider)
 
         // Enhancement, assistant, and Auto-Learn requests all pass here, so refuse blocked providers before any network call.
+        // Read the managed endpoint once so the check and the request use the same URL.
+        let managedEndpoint = ManagedAIEndpoint.current
         try CloudPolicy.requireEnhancementProviderAllowed(
             provider,
             customBaseURL: provider == .custom
-                ? CustomAIProviderManager.shared.requestConfiguration(forModel: resolvedModel)?.baseURL : nil
+                ? CustomAIProviderManager.shared.requestConfiguration(forModel: resolvedModel)?.baseURL : nil,
+            managedEndpoint: managedEndpoint
         )
 
         let result: String
@@ -82,6 +85,19 @@ extension AIService {
                 messages: messages,
                 systemPrompt: systemPrompt,
                 temperature: 0.3,
+                timeout: timeout
+            )
+        case .managed:
+            guard let managedEndpoint else {
+                throw EnhancementError.notConfigured
+            }
+            // The token is read from preferences for this request only and isn't stored or logged. The client sends
+            // no temperature and follows redirects only within the endpoint.
+            result = try await ManagedAIClient.chatCompletion(
+                endpoint: managedEndpoint,
+                token: ManagedAIEndpoint.token(),
+                messages: messages,
+                systemPrompt: systemPrompt,
                 timeout: timeout
             )
         case .voiceInkRefine:

@@ -8,21 +8,17 @@ import XCTest
 final class CloudPolicyRuntimeTests: XCTestCase {
     private let key = CloudPolicy.disableCloudServicesKey
     private let modelKey = "CurrentTranscriptionModel"
-    private var savedValue: Any?
-    private var savedModel: Any?
+    private let preferences = TestPreferences.defaults
 
     override func setUp() async throws {
         try await super.setUp()
-        savedValue = UserDefaults.standard.object(forKey: key)
-        savedModel = UserDefaults.standard.object(forKey: modelKey)
-        UserDefaults.standard.removeObject(forKey: key)
+        TestPreferences.reset()
         CloudPolicyMonitor.shared.start()
         CloudPolicyMonitor.shared.refresh()
     }
 
     override func tearDown() async throws {
-        UserDefaults.standard.set(savedValue, forKey: key)
-        UserDefaults.standard.set(savedModel, forKey: modelKey)
+        TestPreferences.reset()
         CloudPolicyMonitor.shared.refresh()
         try await super.tearDown()
     }
@@ -47,26 +43,26 @@ final class CloudPolicyRuntimeTests: XCTestCase {
         let cloudModel = try XCTUnwrap(
             TranscriptionModelRegistry.models.first { !CloudPolicy.isLocalTranscriptionProvider($0.provider) }
         )
-        UserDefaults.standard.set(cloudModel.selectionKey, forKey: modelKey)
+        preferences.set(cloudModel.selectionKey, forKey: modelKey)
         let manager = makeManager()
         manager.loadCurrentTranscriptionModel()
         XCTAssertEqual(manager.currentTranscriptionModel?.selectionKey, cloudModel.selectionKey)
 
-        try await waitForPolicyChange { UserDefaults.standard.set(true, forKey: key) }
+        try await waitForPolicyChange { preferences.set(true, forKey: key) }
         let fallback = try XCTUnwrap(manager.currentTranscriptionModel)
         XCTAssertTrue(CloudPolicy.isLocalTranscriptionProvider(fallback.provider), "Moved to \(fallback.name)")
-        XCTAssertEqual(UserDefaults.standard.string(forKey: modelKey), cloudModel.selectionKey, "Saved choice is kept")
+        XCTAssertEqual(preferences.string(forKey: modelKey), cloudModel.selectionKey, "Saved choice is kept")
 
         // A refresh while blocked must not save the local stand-in over the user's choice.
         manager.refreshAllAvailableModels()
-        XCTAssertEqual(UserDefaults.standard.string(forKey: modelKey), cloudModel.selectionKey)
+        XCTAssertEqual(preferences.string(forKey: modelKey), cloudModel.selectionKey)
 
-        try await waitForPolicyChange { UserDefaults.standard.removeObject(forKey: key) }
+        try await waitForPolicyChange { preferences.removeObject(forKey: key) }
         XCTAssertEqual(manager.currentTranscriptionModel?.selectionKey, cloudModel.selectionKey)
     }
 
     func testChangeFromAnotherProcessIsObserved() async throws {
-        let domain = try XCTUnwrap(Bundle.main.bundleIdentifier)
+        let domain = TestPreferences.suiteName
 
         try await waitForPolicyChange {
             try runDefaults(["write", domain, key, "-bool", "true"])

@@ -49,7 +49,7 @@ final class CustomAIProviderManager: ObservableObject {
 
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "CustomAIProviderManager")
     private let providersKey = "customAIProviders"
-    private let defaults = UserDefaults.standard
+    private let defaults = AppPreferences.defaults
 
     private init() {
         loadProviders()

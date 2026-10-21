@@ -386,7 +386,7 @@ struct ModeConfigFormView: View {
                 } else {
                     Picker("AI Provider", selection: providerBinding) {
                         ForEach(providerOptions, id: \.self) { provider in
-                            Text(provider.rawValue).tag(provider)
+                            Text(provider.displayName).tag(provider)
                         }
                     }
                     .onChange(of: draft.selectedAIProvider) { _, newValue in
@@ -415,9 +415,16 @@ struct ModeConfigFormView: View {
                 }
 
                 if !CloudPolicy.isCloudAllowed {
-                    ManagedByOrganizationCaption(
-                        message: "Only Ollama, VoiceInk Refine, and custom models on this Mac are available."
-                    )
+                    if let managedEndpoint = cloudPolicyMonitor.managedEndpoint {
+                        ManagedByOrganizationCaption(
+                            message:
+                                "Only \(managedEndpoint.providerName), Ollama, VoiceInk Refine, and custom models on this Mac are available."
+                        )
+                    } else {
+                        ManagedByOrganizationCaption(
+                            message: "Only Ollama, VoiceInk Refine, and custom models on this Mac are available."
+                        )
+                    }
                 }
 
                 if let provider = configuredSelectedAIProvider {

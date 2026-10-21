@@ -11,6 +11,7 @@ import XCTest
 final class RecordingURLProtocol: URLProtocol {
     private static let lock = NSLock()
     nonisolated(unsafe) private static var recordedURLs: [URL] = []
+    nonisolated(unsafe) private static var recordedAuthorizations: [(url: URL, authorization: String?)] = []
     nonisolated(unsafe) private static var isRecording = false
     private static let installConfigurationHook: Void = {
         for name in ["ephemeralSessionConfiguration", "defaultSessionConfiguration"] {
@@ -28,10 +29,18 @@ final class RecordingURLProtocol: URLProtocol {
         return recordedURLs
     }
 
+    /// Each recorded request with its `Authorization` header.
+    static var authorizations: [(url: URL, authorization: String?)] {
+        lock.lock()
+        defer { lock.unlock() }
+        return recordedAuthorizations
+    }
+
     static func start() {
         _ = installConfigurationHook
         lock.lock()
         recordedURLs = []
+        recordedAuthorizations = []
         isRecording = true
         lock.unlock()
         URLProtocol.registerClass(RecordingURLProtocol.self)
@@ -50,6 +59,7 @@ final class RecordingURLProtocol: URLProtocol {
         guard isRecording else { return false }
         if let url = request.url {
             recordedURLs.append(url)
+            recordedAuthorizations.append((url, request.value(forHTTPHeaderField: "Authorization")))
         }
         return true
     }
@@ -82,32 +92,29 @@ extension URLSessionConfiguration {
 final class CloudPolicyTests: XCTestCase {
     private let key = CloudPolicy.disableCloudServicesKey
     private let ollamaBaseURLKey = "ollamaBaseURL"
-    private var savedValue: Any?
-    private var savedOllamaBaseURL: Any?
+    private let preferences = TestPreferences.defaults
 
     override func setUp() {
         super.setUp()
-        savedValue = UserDefaults.standard.object(forKey: key)
-        savedOllamaBaseURL = UserDefaults.standard.object(forKey: ollamaBaseURLKey)
+        TestPreferences.reset()
         RecordingURLProtocol.start()
     }
 
     override func tearDown() {
         RecordingURLProtocol.stop()
-        UserDefaults.standard.set(savedValue, forKey: key)
-        UserDefaults.standard.set(savedOllamaBaseURL, forKey: ollamaBaseURLKey)
+        TestPreferences.reset()
         super.tearDown()
     }
 
     private func setOllamaBaseURL(_ url: String?) {
-        UserDefaults.standard.set(url, forKey: ollamaBaseURLKey)
+        preferences.set(url, forKey: ollamaBaseURLKey)
     }
 
     private func setCloudDisabled(_ disabled: Bool?) {
         if let disabled {
-            UserDefaults.standard.set(disabled, forKey: key)
+            preferences.set(disabled, forKey: key)
         } else {
-            UserDefaults.standard.removeObject(forKey: key)
+            preferences.removeObject(forKey: key)
         }
     }
 
@@ -139,9 +146,13 @@ final class CloudPolicyTests: XCTestCase {
     // MARK: - Enhancement providers
 
     func testEveryEnhancementProviderAllowedWhenCloudAllowed() {
+        let managedEndpoint = ManagedAIEndpoint(
+            baseURL: URL(string: "https://ai.example.com/v1")!, model: "org-model", providerName: "Organization AI")
         for provider in AIProvider.allCases {
             XCTAssertTrue(
-                CloudPolicy.isEnhancementProviderAllowed(provider, customBaseURL: "https://api.example.com/v1", cloudAllowed: true),
+                CloudPolicy.isEnhancementProviderAllowed(
+                    provider, customBaseURL: "https://api.example.com/v1", cloudAllowed: true,
+                    managedEndpoint: managedEndpoint),
                 "\(provider.rawValue) should be allowed when cloud services are on"
             )
         }
@@ -153,7 +164,7 @@ final class CloudPolicyTests: XCTestCase {
         for provider in AIProvider.allCases where provider != .custom {
             XCTAssertEqual(
                 CloudPolicy.isEnhancementProviderAllowed(
-                    provider, ollamaBaseURL: "http://localhost:11434", cloudAllowed: false),
+                    provider, ollamaBaseURL: "http://localhost:11434", cloudAllowed: false, managedEndpoint: nil),
                 allowed.contains(provider),
                 "Unexpected policy result for \(provider.rawValue)"
             )

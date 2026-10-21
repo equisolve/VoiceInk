@@ -14,7 +14,7 @@ enum CloudPolicy {
 
     /// False when the organization has turned cloud services off.
     static var isCloudAllowed: Bool {
-        isCloudAllowed(in: .standard)
+        isCloudAllowed(in: AppPreferences.defaults)
     }
 
     static func isCloudAllowed(in defaults: UserDefaults) -> Bool {
@@ -23,7 +23,7 @@ enum CloudPolicy {
 
     /// True when a configuration profile sets the key, so the UI can say the setting is managed.
     static var isManaged: Bool {
-        UserDefaults.standard.objectIsForced(forKey: disableCloudServicesKey)
+        AppPreferences.defaults.objectIsForced(forKey: disableCloudServicesKey)
     }
 
     // MARK: - Transcription
@@ -62,15 +62,23 @@ enum CloudPolicy {
 
     // MARK: - AI enhancement
 
-    /// The on-device model always passes. Ollama and a custom endpoint pass only when their host is a loopback address.
-    /// When `ollamaBaseURL` is nil, Ollama is checked against the saved server URL.
-    /// The Local CLI provider is blocked because the command it runs can call cloud services.
+    /// The on-device model always passes, and the organization's provider passes when its endpoint is allowed. Ollama
+    /// and a custom endpoint pass only when their URL is on a loopback host, even when it points at the managed
+    /// endpoint, because only the managed provider guards the endpoint's token and redirects. When `ollamaBaseURL` is
+    /// nil, Ollama is checked against the saved server URL. The Local CLI provider is blocked because the command it
+    /// runs can call cloud services.
     static func isEnhancementProviderAllowed(
         _ provider: AIProvider,
         customBaseURL: String? = nil,
         ollamaBaseURL: String? = nil,
-        cloudAllowed: Bool = isCloudAllowed
+        cloudAllowed: Bool = isCloudAllowed,
+        managedEndpoint: ManagedAIEndpoint? = ManagedAIEndpoint.current
     ) -> Bool {
+        if provider == .managed {
+            guard let managedEndpoint, ManagedAIEndpoint.isValidBaseURL(managedEndpoint.baseURL) else { return false }
+            return cloudAllowed || isManagedEndpointAllowed(managedEndpoint)
+        }
+
         if cloudAllowed { return true }
 
         switch provider {
@@ -85,16 +93,48 @@ enum CloudPolicy {
         }
     }
 
+    /// While cloud services are off, a managed endpoint off this Mac must use HTTPS so the token isn't sent in clear
+    /// text. An endpoint URL with user info, a query, or a fragment is never allowed.
+    static func isManagedEndpointAllowed(_ endpoint: ManagedAIEndpoint) -> Bool {
+        guard ManagedAIEndpoint.isValidBaseURL(endpoint.baseURL) else { return false }
+        return endpoint.baseURL.scheme?.lowercased() == "https" || isLoopbackURL(endpoint.baseURL.absoluteString)
+    }
+
+    /// True when the URL has the managed endpoint's scheme, host, and port, and no user info. The managed provider
+    /// follows a redirect only to such a URL, so the token can't be forwarded to another server.
+    static func hasManagedEndpointOrigin(_ url: URL, managedEndpoint: ManagedAIEndpoint) -> Bool {
+        guard let candidate = URLComponents(url: url, resolvingAgainstBaseURL: true),
+            let managed = URLComponents(url: managedEndpoint.baseURL, resolvingAgainstBaseURL: false),
+            let scheme = candidate.scheme?.lowercased(), scheme == managed.scheme?.lowercased(),
+            let host = candidate.host?.lowercased(), !host.isEmpty, host == managed.host?.lowercased(),
+            candidate.user == nil, candidate.password == nil
+        else {
+            return false
+        }
+        return effectivePort(candidate) == effectivePort(managed)
+    }
+
+    private static func effectivePort(_ components: URLComponents) -> Int? {
+        if let port = components.port { return port }
+        switch components.scheme?.lowercased() {
+        case "https": return 443
+        case "http": return 80
+        default: return nil
+        }
+    }
+
     /// Throws before any text leaves the Mac when the provider, Ollama server, or custom endpoint is blocked.
     static func requireEnhancementProviderAllowed(
         _ provider: AIProvider,
         customBaseURL: String? = nil,
         ollamaBaseURL: String? = nil,
-        cloudAllowed: Bool = isCloudAllowed
+        cloudAllowed: Bool = isCloudAllowed,
+        managedEndpoint: ManagedAIEndpoint? = ManagedAIEndpoint.current
     ) throws {
         guard
             isEnhancementProviderAllowed(
-                provider, customBaseURL: customBaseURL, ollamaBaseURL: ollamaBaseURL, cloudAllowed: cloudAllowed)
+                provider, customBaseURL: customBaseURL, ollamaBaseURL: ollamaBaseURL, cloudAllowed: cloudAllowed,
+                managedEndpoint: managedEndpoint)
         else {
             throw CloudPolicyError.cloudEnhancementDisabled(providerName: provider.rawValue)
         }
@@ -109,24 +149,31 @@ enum CloudPolicy {
 }
 
 extension Notification.Name {
-    /// Posted on the main thread when `DisableCloudServices` changes, including when a configuration profile is
-    /// installed or removed while the app runs.
+    /// Posted on the main thread when `DisableCloudServices` or the managed AI endpoint changes, including when a
+    /// configuration profile is installed or removed while the app runs.
     static let cloudPolicyDidChange = Notification.Name("cloudPolicyDidChange")
 }
 
-/// Watches `DisableCloudServices` so model selection and open screens follow a policy change without a relaunch.
+/// Watches `DisableCloudServices` and the managed AI endpoint keys so model selection and open screens follow a
+/// change without a relaunch.
 @MainActor
 final class CloudPolicyMonitor: NSObject, ObservableObject {
     static let shared = CloudPolicyMonitor()
 
+    nonisolated private static let observedKeys = [CloudPolicy.disableCloudServicesKey] + ManagedAIEndpoint.allKeys
+
     @Published private(set) var isCloudAllowed = CloudPolicy.isCloudAllowed
+    @Published private(set) var managedEndpoint = ManagedAIEndpoint.current
     private var isObserving = false
 
     func start() {
         guard !isObserving else { return }
         isObserving = true
         isCloudAllowed = CloudPolicy.isCloudAllowed
-        UserDefaults.standard.addObserver(self, forKeyPath: CloudPolicy.disableCloudServicesKey, options: [.new], context: nil)
+        managedEndpoint = ManagedAIEndpoint.current
+        for key in Self.observedKeys {
+            AppPreferences.defaults.addObserver(self, forKeyPath: key, options: [.new], context: nil)
+        }
     }
 
     nonisolated override func observeValue(
@@ -135,17 +182,20 @@ final class CloudPolicyMonitor: NSObject, ObservableObject {
         change: [NSKeyValueChangeKey: Any]?,
         context: UnsafeMutableRawPointer?
     ) {
-        guard keyPath == CloudPolicy.disableCloudServicesKey else { return }
+        guard let keyPath, Self.observedKeys.contains(keyPath) else { return }
         DispatchQueue.main.async {
             MainActor.assumeIsolated { self.refresh() }
         }
     }
 
-    /// Re-reads the key and notifies observers when the effective value changed.
+    /// Re-reads the keys and notifies observers when the effective policy or managed endpoint changed.
+    /// The token isn't tracked here; requests read it each time.
     func refresh() {
         let allowed = CloudPolicy.isCloudAllowed
-        guard allowed != isCloudAllowed else { return }
+        let endpoint = ManagedAIEndpoint.current
+        guard allowed != isCloudAllowed || endpoint != managedEndpoint else { return }
         isCloudAllowed = allowed
+        managedEndpoint = endpoint
         NotificationCenter.default.post(name: .cloudPolicyDidChange, object: nil)
         NotificationCenter.default.post(name: .AppSettingsDidChange, object: nil)
     }

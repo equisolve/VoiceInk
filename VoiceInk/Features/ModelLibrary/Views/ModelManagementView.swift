@@ -174,6 +174,9 @@ struct ModelManagementView: View {
             case .local:
                 localModelsSection
             case .cloud:
+                if let managedEndpoint = cloudPolicyMonitor.managedEndpoint {
+                    ManagedAIProviderCard(endpoint: managedEndpoint)
+                }
                 if CloudPolicy.isCloudAllowed {
                     CloudProviderManagementView(
                         selectedProviderID: selectedCloudProviderID,
@@ -184,7 +187,9 @@ struct ModelManagementView: View {
                 } else {
                     ManagedByOrganizationNotice(
                         message:
-                            "Cloud transcription and AI providers are off, and API keys can't be added. Use a model on the Local tab."
+                            cloudPolicyMonitor.managedEndpoint == nil
+                            ? "Cloud transcription and AI providers are off, and API keys can't be added. Use a model on the Local tab."
+                            : "Other cloud transcription and AI providers are off, and API keys can't be added. Use a transcription model on the Local tab."
                     )
                 }
             case .custom:

@@ -53,7 +53,7 @@ class TranscriptionModelManager: ObservableObject {
     /// Moves off a blocked cloud model when cloud services are turned off, and back to the saved model when
     /// they're turned on again. The saved choice in UserDefaults is never overwritten here.
     func applyCloudPolicy() {
-        guard let savedSelection = UserDefaults.standard.string(forKey: "CurrentTranscriptionModel"),
+        guard let savedSelection = AppPreferences.defaults.string(forKey: "CurrentTranscriptionModel"),
             let savedModel = TranscriptionModelRegistry.model(forSelectionKey: savedSelection, in: allAvailableModels),
             isAvailableOnCurrentOS(savedModel)
         else {
@@ -116,11 +116,11 @@ class TranscriptionModelManager: ObservableObject {
     // MARK: - Model loading from UserDefaults
 
     func loadCurrentTranscriptionModel() {
-        if let savedModelName = UserDefaults.standard.string(forKey: "CurrentTranscriptionModel"),
+        if let savedModelName = AppPreferences.defaults.string(forKey: "CurrentTranscriptionModel"),
             let savedModel = TranscriptionModelRegistry.model(forSelectionKey: savedModelName, in: allAvailableModels)
         {
             guard isAvailableOnCurrentOS(savedModel) else {
-                UserDefaults.standard.removeObject(forKey: "CurrentTranscriptionModel")
+                AppPreferences.defaults.removeObject(forKey: "CurrentTranscriptionModel")
                 currentTranscriptionModel = nil
                 return
             }
@@ -156,7 +156,7 @@ class TranscriptionModelManager: ObservableObject {
         }
 
         self.currentTranscriptionModel = model
-        UserDefaults.standard.set(model.selectionKey, forKey: "CurrentTranscriptionModel")
+        AppPreferences.defaults.set(model.selectionKey, forKey: "CurrentTranscriptionModel")
         ensureSelectedLanguageIsSupported(by: model)
 
         if model.provider != .whisper {
@@ -169,11 +169,11 @@ class TranscriptionModelManager: ObservableObject {
     }
 
     private func ensureSelectedLanguageIsSupported(by model: any TranscriptionModel) {
-        let currentLanguage = UserDefaults.standard.string(forKey: "SelectedLanguage")
+        let currentLanguage = AppPreferences.defaults.string(forKey: "SelectedLanguage")
         let compatibleLanguage = TranscriptionLanguageSupport.validLanguageOrFallback(currentLanguage, for: model)
 
         if currentLanguage != compatibleLanguage {
-            UserDefaults.standard.set(compatibleLanguage, forKey: "SelectedLanguage")
+            AppPreferences.defaults.set(compatibleLanguage, forKey: "SelectedLanguage")
             NotificationCenter.default.post(name: .languageDidChange, object: nil)
         }
     }
@@ -181,7 +181,7 @@ class TranscriptionModelManager: ObservableObject {
     // MARK: - Refresh all available models
 
     func refreshAllAvailableModels() {
-        let savedSelection = UserDefaults.standard.string(forKey: "CurrentTranscriptionModel")
+        let savedSelection = AppPreferences.defaults.string(forKey: "CurrentTranscriptionModel")
         // While cloud services are off, the current model may be a local stand-in, so restore from the saved choice.
         let currentSelection = CloudPolicy.isCloudAllowed
             ? currentTranscriptionModel?.selectionKey ?? savedSelection
@@ -207,7 +207,7 @@ class TranscriptionModelManager: ObservableObject {
                 setDefaultTranscriptionModel(updatedModel)
             } else {
                 currentTranscriptionModel = nil
-                UserDefaults.standard.removeObject(forKey: "CurrentTranscriptionModel")
+                AppPreferences.defaults.removeObject(forKey: "CurrentTranscriptionModel")
             }
         } else {
             currentTranscriptionModel = nil
@@ -231,7 +231,7 @@ class TranscriptionModelManager: ObservableObject {
 
     func clearCurrentTranscriptionModel() {
         currentTranscriptionModel = nil
-        UserDefaults.standard.removeObject(forKey: "CurrentTranscriptionModel")
+        AppPreferences.defaults.removeObject(forKey: "CurrentTranscriptionModel")
     }
 
     // MARK: - Handle model deletion callback
@@ -240,10 +240,10 @@ class TranscriptionModelManager: ObservableObject {
     func handleModelDeleted(_ modelName: String) {
         if currentTranscriptionModel?.name == modelName {
             currentTranscriptionModel = nil
-            UserDefaults.standard.removeObject(forKey: "CurrentTranscriptionModel")
+            AppPreferences.defaults.removeObject(forKey: "CurrentTranscriptionModel")
             whisperModelManager?.loadedWhisperModel = nil
             whisperModelManager?.isModelLoaded = false
-            UserDefaults.standard.removeObject(forKey: "CurrentModel")
+            AppPreferences.defaults.removeObject(forKey: "CurrentModel")
         }
         refreshAllAvailableModels()
     }
