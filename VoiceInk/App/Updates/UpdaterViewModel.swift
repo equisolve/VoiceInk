@@ -18,6 +18,9 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     private let defaults: UserDefaults
+    // A build without an update feed in its Info.plist, such as an organization's own signed build,
+    // never starts Sparkle, so it can't check for or install another publisher's update.
+    private let hasUpdateFeed: Bool
     private var isUserInitiatedUpdateCheck = false
     private lazy var updaterController = SPUStandardUpdaterController(
         startingUpdater: false,
@@ -32,8 +35,11 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
     override init() {
         let defaults = UserDefaults.standard
         self.defaults = defaults
+        hasUpdateFeed = Self.bundleHasUpdateFeed(Bundle.main)
         checksForUpdatesWhenDashboardAppears = Self.initialAutomaticCheckPreference(in: defaults)
         super.init()
+
+        guard hasUpdateFeed else { return }
 
         let updater = updaterController.updater
 
@@ -62,7 +68,7 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     func checkForUpdatesIfDue() {
-        guard checksForUpdatesWhenDashboardAppears else { return }
+        guard hasUpdateFeed, checksForUpdatesWhenDashboardAppears else { return }
 
         let updater = updaterController.updater
         guard !updater.sessionInProgress else { return }
@@ -76,7 +82,7 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     func checkForUpdates() {
-        guard canCheckForUpdates else { return }
+        guard hasUpdateFeed, canCheckForUpdates else { return }
 
         // Any explicit check is interaction with the currently advertised update.
         // Persist it before presenting Sparkle so dismissing or closing the native
@@ -121,6 +127,7 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
     }
 
     private func checkForUpdateInformationIfPossible() {
+        guard hasUpdateFeed else { return }
         let updater = updaterController.updater
         guard !updater.sessionInProgress else { return }
         updater.checkForUpdateInformation()
@@ -136,6 +143,11 @@ final class UpdaterViewModel: NSObject, ObservableObject, SPUUpdaterDelegate {
         guard !versions.contains(versionIdentifier) else { return }
         versions.append(versionIdentifier)
         defaults.set(versions, forKey: DefaultsKey.interactedUpdateVersions)
+    }
+
+    static func bundleHasUpdateFeed(_ bundle: Bundle) -> Bool {
+        guard let feed = bundle.object(forInfoDictionaryKey: "SUFeedURL") as? String else { return false }
+        return !feed.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private static func initialAutomaticCheckPreference(in defaults: UserDefaults) -> Bool {
