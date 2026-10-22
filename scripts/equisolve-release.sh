@@ -69,7 +69,7 @@ Options:
   --build-number <number>     Set CFBundleVersion. Use a number higher than the last
                               Equisolve release so Jamf and the installer see a new
                               version. Default: the project's CURRENT_PROJECT_VERSION.
-  --skip-notarization        Sign but don't submit to Apple. The result is a test build.
+  --skip-notarization         Sign but don't submit to Apple. The result is a test build.
   --allow-dirty               Permit a dirty Git working tree.
   --setup-notarization        Store notarization credentials in the Keychain and exit.
   --verify <VoiceInk.app>     Check a signed app's bundle ID, Info.plist, entitlements,
@@ -170,7 +170,7 @@ while [[ $# -gt 0 ]]; do
             ;;
         --build-number)
             [[ $# -ge 2 ]] || fail "--build-number requires a value"
-            [[ "$2" =~ ^[0-9]+$ ]] || fail "--build-number must be a positive integer"
+            [[ "$2" =~ ^[1-9][0-9]*$ ]] || fail "--build-number must be a positive integer"
             BUILD_NUMBER="$2"
             shift 2
             ;;
