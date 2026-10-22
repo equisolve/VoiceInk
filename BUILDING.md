@@ -65,13 +65,24 @@ Select the `VoiceInk` scheme. Run builds `VoiceInk Dev.app`; Archive uses Releas
 - It uses the `LOCAL_BUILD` Swift flag, so it has no license check and no iCloud sync.
 - It's signed with `release/equisolve/VoiceInk.entitlements`, which has no iCloud, push notification, or keychain group entitlements.
 - Its `Info.plist` has no `SUFeedURL` or `SUPublicEDKey`, so VoiceInk never starts the Sparkle updater and never checks the upstream update feed. To update users, deploy a new build.
-- The output is `VoiceInk.app` and a zip of it, in `~/Downloads/VoiceInk Equisolve Builds/VoiceInk-Equisolve-<timestamp>/`. The script doesn't build a DMG or an appcast.
+- The output is `VoiceInk.app`, a zip of it, and an installer package, in `~/Downloads/VoiceInk Equisolve Builds/VoiceInk-Equisolve-<timestamp>/`. The script doesn't build a DMG or an appcast.
 
 The script builds the app without signing, changes the bundle ID and removes the feed in `Info.plist`, and then signs every library, framework, helper, and XPC service, and the app last. Before notarizing, it checks that each executable file has hardened runtime and Equisolve's team ID.
 
+### Installer package
+
+The installer package, `VoiceInk-Equisolve-<version>-<build>.pkg`, is what Equisolve uploads to Jamf Pro and deploys through Self Service. It installs only `VoiceInk.app`, always at `/Applications/VoiceInk.app`, and runs no install scripts. The package is marked non-relocatable, so Installer writes to `/Applications` even if a copy of the app exists somewhere else on the Mac.
+
+After the app is notarized and stapled, the script builds the package, signs it with `Developer ID Installer: Equisolve LLC (3MMFZ6XFFA)`, notarizes and staples it, and checks it with `pkgutil --check-signature` and `spctl -a -t install`. To sign with a different certificate, pass `--installer-identity` or set `VOICEINK_EQUISOLVE_INSTALLER_IDENTITY`. An ad hoc build (`--identity -`) has no package.
+
 ### Before your first release
 
-You need the `Developer ID Application: Equisolve LLC (3MMFZ6XFFA)` certificate and its private key in your login keychain, and an Apple ID on Equisolve's Apple Developer team.
+You need these certificates, each with its private key, in your login keychain, and an Apple ID on Equisolve's Apple Developer team:
+
+- `Developer ID Application: Equisolve LLC (3MMFZ6XFFA)` signs the app.
+- `Developer ID Installer: Equisolve LLC (3MMFZ6XFFA)` signs the installer package.
+
+To set up notarization, follow these steps:
 
 1. Create an app-specific password for that Apple ID, as described in [Sign in to apps with your Apple Account using app-specific passwords](https://support.apple.com/en-us/102654).
 2. Store the notarization credentials in your keychain:
@@ -91,9 +102,9 @@ You need the `Developer ID Application: Equisolve LLC (3MMFZ6XFFA)` certificate 
     make equisolve-release
     ```
 
-    The script submits the app to Apple's notary service and waits for the result, which usually takes a few minutes. It then staples the ticket and checks the app with Gatekeeper.
+    The script submits the app to Apple's notary service and waits for the result, which usually takes a few minutes. It then staples the ticket and checks the app with Gatekeeper. It does the same for the installer package.
 
-3. Deploy the zip that the script prints.
+3. Upload the package that the script prints to Jamf Pro.
 
 To check the signing without notarizing, pass options through `EQUISOLVE_RELEASE_ARGS`:
 
@@ -101,7 +112,7 @@ To check the signing without notarizing, pass options through `EQUISOLVE_RELEASE
 make equisolve-release EQUISOLVE_RELEASE_ARGS="--skip-notarization --allow-dirty"
 ```
 
-Pass `--identity -` to sign ad hoc on a Mac without the certificate. Neither kind of test build opens on other Macs. For all options, run `scripts/equisolve-release.sh --help`.
+This test build still has a signed installer package, but it isn't notarized. Pass `--identity -` to sign ad hoc on a Mac without the certificates; that build has no package. Neither kind of test build opens on other Macs. For all options, run `scripts/equisolve-release.sh --help`.
 
 ## Updating pinned dependencies
 
