@@ -96,10 +96,10 @@ To set up notarization, follow these steps:
 ### Build a release
 
 1. Commit or discard your changes. The script refuses a working tree with uncommitted changes.
-2. Run:
+2. Run the following, with a build number higher than the last package in Jamf Pro:
 
     ```bash
-    make equisolve-release
+    make equisolve-release EQUISOLVE_RELEASE_ARGS="--build-number 222"
     ```
 
     The script submits the app to Apple's notary service and waits for the result, which usually takes a few minutes. It then staples the ticket and checks the app with Gatekeeper. It does the same for the installer package.
