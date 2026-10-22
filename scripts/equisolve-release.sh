@@ -3,6 +3,8 @@
 # Builds Equisolve's release of VoiceInk: the LOCAL_BUILD variant (no license check,
 # no iCloud), with the bundle ID com.equisolve.VoiceInk, no Sparkle update feed,
 # signed with Equisolve's Developer ID and hardened runtime, then notarized and stapled.
+# Also builds a signed, notarized installer package that installs VoiceInk.app in
+# /Applications, for deployment through Jamf Pro.
 #
 # Kept separate from scripts/release.sh so upstream changes to that script merge cleanly.
 
@@ -22,6 +24,7 @@ WHISPER_FRAMEWORK="${VOICEINK_WHISPER_FRAMEWORK:-$HOME/VoiceInk-Dependencies/whi
 TEAM_ID="3MMFZ6XFFA"
 BUNDLE_ID="com.equisolve.VoiceInk"
 IDENTITY="${VOICEINK_EQUISOLVE_IDENTITY:-Developer ID Application: Equisolve LLC ($TEAM_ID)}"
+INSTALLER_IDENTITY="${VOICEINK_EQUISOLVE_INSTALLER_IDENTITY:-Developer ID Installer: Equisolve LLC ($TEAM_ID)}"
 NOTARY_PROFILE="${VOICEINK_EQUISOLVE_NOTARY_PROFILE:-VoiceInk-Equisolve-Notarization}"
 
 XCODE_DEVELOPER_DIR="${VOICEINK_XCODE_DEVELOPER_DIR:-${DEVELOPER_DIR:-}}"
@@ -48,12 +51,17 @@ Usage:
 
 Builds VoiceInk with the bundle ID com.equisolve.VoiceInk, signs it with
 Equisolve's Developer ID and hardened runtime, notarizes it, and staples the ticket.
-The script never commits, pushes, tags, or uploads anything except the
-notarization submission.
+Then builds a signed installer package (.pkg) that installs VoiceInk.app in
+/Applications, notarizes it, and staples it. The script never commits, pushes,
+tags, or uploads anything except the notarization submissions.
 
 Options:
   --identity <name or SHA>    Signing identity. Default: Equisolve's Developer ID.
-                              Use - for an ad-hoc test build (implies --skip-notarization).
+                              Use - for an ad-hoc test build (implies --skip-notarization
+                              and skips the installer package).
+  --installer-identity <name or SHA>
+                              Installer package signing identity.
+                              Default: Equisolve's Developer ID Installer.
   --notary-profile <name>     notarytool Keychain profile.
                               Default: VoiceInk-Equisolve-Notarization.
   --output-dir <directory>    Override the timestamped Downloads directory.
@@ -124,11 +132,26 @@ verify_app() {
     printf 'Checked %s Mach-O files.\n' "$count"
 }
 
+# Checks that an installer package has a valid signature from Equisolve's team.
+check_pkg_signature() {
+    local pkg="$1" output
+
+    log "Checking the installer package signature"
+    output="$(pkgutil --check-signature "$pkg")" || fail "Package signature check failed: $pkg"
+    printf '%s\n' "$output"
+    [[ "$output" == *"($TEAM_ID)"* ]] || fail "Package isn't signed by team $TEAM_ID: $pkg"
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --identity)
             [[ $# -ge 2 ]] || fail "--identity requires a value"
             IDENTITY="$2"
+            shift 2
+            ;;
+        --installer-identity)
+            [[ $# -ge 2 ]] || fail "--installer-identity requires a value"
+            INSTALLER_IDENTITY="$2"
             shift 2
             ;;
         --notary-profile)
@@ -197,7 +220,10 @@ require_command codesign
 require_command ditto
 require_command file
 require_command git
+require_command pkgbuild
+require_command pkgutil
 require_command plutil
+require_command productbuild
 require_command security
 require_command shasum
 require_command spctl
@@ -211,6 +237,11 @@ require_command xcrun
 if [[ "$AD_HOC" == "0" ]]; then
     security find-identity -v -p codesigning | grep -F "$IDENTITY" >/dev/null \
         || fail "Signing identity is unavailable: $IDENTITY"
+    # Installer certificates don't match the codesigning policy, so search all identities.
+    installer_identity_line="$(security find-identity -v | grep -F "$INSTALLER_IDENTITY" | head -n 1)" \
+        || fail "Installer signing identity is unavailable: $INSTALLER_IDENTITY"
+    [[ "$installer_identity_line" == *"Developer ID Installer:"*"($TEAM_ID)"* ]] \
+        || fail "Installer signing identity isn't a Developer ID Installer for team $TEAM_ID: $INSTALLER_IDENTITY"
 fi
 
 if [[ "$SKIP_NOTARIZATION" == "0" ]]; then
@@ -237,6 +268,8 @@ mkdir -p "$WORK_DIR"
 # xcodebuild would apply one bundle ID and one entitlements file to every target.
 log "Archiving VoiceInk (LOCAL_BUILD, unsigned)"
 rm -rf "$DERIVED_DATA"
+# $(inherited) is an Xcode build setting reference, not shell expansion.
+# shellcheck disable=SC2016
 xcodebuild archive \
     -project "$PROJECT_PATH" \
     -scheme "$SCHEME" \
@@ -319,6 +352,74 @@ log "Packaging $DIST_ZIP"
 ditto -c -k --keepParent "$APP_PATH" "$DIST_ZIP"
 DIST_SHA256="$(shasum -a 256 "$DIST_ZIP" | awk '{print $1}')"
 
+# The installer package holds only VoiceInk.app, installed at /Applications/VoiceInk.app,
+# with no install scripts. BundleIsRelocatable=false makes Installer write to
+# /Applications even when another copy of the bundle ID exists elsewhere on the Mac.
+DIST_PKG=""
+DIST_PKG_SHA256=""
+if [[ "$AD_HOC" == "1" ]]; then
+    log "Skipping the installer package: an ad-hoc build can't sign one"
+else
+    DIST_PKG="$OUTPUT_DIR/VoiceInk-Equisolve-$SHORT_VERSION-$BUILD_VERSION.pkg"
+    PKG_ROOT="$WORK_DIR/pkg-root"
+    COMPONENT_PLIST="$WORK_DIR/component.plist"
+    COMPONENT_PKG="$WORK_DIR/VoiceInk-component.pkg"
+    PKG_EXPANDED="$WORK_DIR/pkg-expanded"
+
+    # The staged and expanded copies of VoiceInk.app would stay registered with Launch
+    # Services as extra copies of the bundle ID, so remove them on every exit path.
+    cleanup_pkg_work() {
+        rm -rf "$PKG_ROOT" "$PKG_EXPANDED" "$COMPONENT_PKG" "$COMPONENT_PLIST"
+    }
+    trap cleanup_pkg_work EXIT
+
+    log "Building $DIST_PKG"
+    mkdir -p "$PKG_ROOT"
+    ditto "$APP_PATH" "$PKG_ROOT/VoiceInk.app"
+    pkgbuild --analyze --root "$PKG_ROOT" "$COMPONENT_PLIST"
+    [[ "$(plutil -extract 0.RootRelativeBundlePath raw "$COMPONENT_PLIST")" == "VoiceInk.app" ]] \
+        || fail "Unexpected bundle in the package root: $COMPONENT_PLIST"
+    plutil -replace 0.BundleIsRelocatable -bool false "$COMPONENT_PLIST"
+    pkgbuild \
+        --root "$PKG_ROOT" \
+        --component-plist "$COMPONENT_PLIST" \
+        --identifier "$BUNDLE_ID" \
+        --version "$BUILD_VERSION" \
+        --install-location /Applications \
+        "$COMPONENT_PKG"
+
+    # Expand the package to check its contents. The payload listing can't be used for this:
+    # it shows extended attributes, such as com.apple.provenance, as ._ entries that Installer
+    # restores as attributes, not files.
+    pkgutil --expand-full "$COMPONENT_PKG" "$PKG_EXPANDED"
+    [[ ! -e "$PKG_EXPANDED/Scripts" ]] || fail "The package has install scripts: $COMPONENT_PKG"
+    payload_entries="$(find "$PKG_EXPANDED/Payload" -mindepth 1 -maxdepth 1)"
+    [[ "$payload_entries" == "$PKG_EXPANDED/Payload/VoiceInk.app" ]] \
+        || fail "The package payload must hold only VoiceInk.app. Found: $payload_entries"
+    codesign --verify --deep --strict "$PKG_EXPANDED/Payload/VoiceInk.app" \
+        || fail "Signature check failed for the app in the package"
+
+    productbuild \
+        --package "$COMPONENT_PKG" \
+        --sign "$INSTALLER_IDENTITY" \
+        --timestamp \
+        "$DIST_PKG"
+    cleanup_pkg_work
+    trap - EXIT
+
+    check_pkg_signature "$DIST_PKG"
+
+    if [[ "$SKIP_NOTARIZATION" == "0" ]]; then
+        log "Submitting the installer package for notarization"
+        xcrun notarytool submit "$DIST_PKG" --keychain-profile "$NOTARY_PROFILE" --wait
+        xcrun stapler staple "$DIST_PKG"
+        xcrun stapler validate "$DIST_PKG"
+        check_pkg_signature "$DIST_PKG"
+        spctl -a -vvv -t install "$DIST_PKG" || fail "Gatekeeper rejected the package: $DIST_PKG"
+    fi
+    DIST_PKG_SHA256="$(shasum -a 256 "$DIST_PKG" | awk '{print $1}')"
+fi
+
 log "Code signature"
 codesign -dv --verbose=4 "$APP_PATH" 2>&1 | grep -E '^(Identifier|Format|CodeDirectory|Authority|TeamIdentifier|Timestamp|Runtime Version|Signature size)'
 codesign -dr - "$APP_PATH" 2>&1 | grep -F 'designated'
@@ -329,6 +430,12 @@ printf 'Bundle ID:     %s\n' "$BUNDLE_ID"
 printf 'App:           %s\n' "$APP_PATH"
 printf 'Zip:           %s\n' "$DIST_ZIP"
 printf 'Zip SHA-256:   %s\n' "$DIST_SHA256"
+if [[ -n "$DIST_PKG" ]]; then
+    printf 'Package:       %s\n' "$DIST_PKG"
+    printf 'Pkg SHA-256:   %s\n' "$DIST_PKG_SHA256"
+else
+    printf 'Package:       not built (ad-hoc signing)\n'
+fi
 if [[ "$SKIP_NOTARIZATION" == "1" ]]; then
     printf 'Notarization:  skipped (test build only; Gatekeeper will block it on other Macs)\n'
 else
