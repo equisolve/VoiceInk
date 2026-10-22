@@ -28,6 +28,40 @@ enum ManagedAIClient {
     /// Makes the configuration for each request's session. Tests replace it to add a stub protocol.
     static var makeSessionConfiguration: () -> URLSessionConfiguration = { .ephemeral }
 
+    /// Sends the request with the credential `ManagedAICredential.resolve` picks: `ManagedAIToken`, then the
+    /// signed-in key. When sign-in is set up and the person hasn't signed in, nothing is sent. When the endpoint
+    /// answers 401 to the signed-in key, the key is deleted so the person is asked to sign in again.
+    static func chatCompletion(
+        endpoint: ManagedAIEndpoint,
+        messages: [ChatMessage],
+        systemPrompt: String?,
+        timeout: TimeInterval,
+        defaults: UserDefaults = AppPreferences.defaults,
+        keyStore: ManagedAIKeyStore = .shared,
+        maxRetries: Int = 2
+    ) async throws -> String {
+        let credential = endpoint.credential(in: defaults, keyStore: keyStore)
+        if credential == .signInRequired {
+            throw ManagedAISignInError.notSignedIn
+        }
+
+        do {
+            return try await chatCompletion(
+                endpoint: endpoint, token: credential.token, messages: messages, systemPrompt: systemPrompt,
+                timeout: timeout, maxRetries: maxRetries)
+        } catch let error as LLMKitError {
+            if case .httpError(401, _) = error, case .signedInKey(let sentKey) = credential {
+                // Delete the key only if it's still the one that was rejected. The person may have signed in again
+                // while this request was running, and that new key stays.
+                if keyStore.load()?.apiKey == sentKey {
+                    keyStore.delete()
+                }
+                throw ManagedAISignInError.signInExpired
+            }
+            throw error
+        }
+    }
+
     static func chatCompletion(
         endpoint: ManagedAIEndpoint,
         token: String,

@@ -31,6 +31,7 @@ VoiceInk fully trusts an Ollama or custom endpoint on `localhost`, `127.0.0.1`, 
 The key covers transcription and AI enhancement. These network connections aren't affected:
 
 - Downloads of local models (Whisper, Parakeet, transcribe.cpp, and VoiceInk Refine).
+- Signing in with Equisolve, which goes only to `ManagedAISignInURL`, as described in [Let each person sign in](#let-each-person-sign-in).
 - Update checks through Sparkle, in builds that have an update feed. Equisolve's release has none, so it never checks for updates. In other builds, set `VoiceInkChecksForUpdatesOnLaunch` to `false` to turn off automatic checks.
 - In-app announcements. To turn them off, set `enableAnnouncements` to `false`.
 - License activation and validation, in builds that check a license. Equisolve's release doesn't.
@@ -43,7 +44,8 @@ To give users AI enhancement through a service your organization runs, set these
 | --- | --- | --- |
 | `ManagedAIEndpointURL` | String | The base URL of the API, such as `https://ai.example.com/v1`. VoiceInk sends requests to `chat/completions` under it. A URL that already ends in `/chat/completions` is used as is. VoiceInk ignores a URL that has a user name, password, query, or fragment; put credentials in `ManagedAIToken`. |
 | `ManagedAIModel` | String | The model name to send with each request. |
-| `ManagedAIToken` | String | The token to send in an `Authorization: Bearer` header. Optional. |
+| `ManagedAISignInURL` | String | The Hourglass URL people sign in to for their own key, such as `https://hourglass.intra.equisolve.com`. Optional. See [Let each person sign in](#let-each-person-sign-in). The URL must use `https`, and VoiceInk ignores a URL that has a user name, password, query, or fragment. |
+| `ManagedAIToken` | String | The token to send in an `Authorization: Bearer` header. Optional, and meant for setups without sign-in. When it's set, VoiceInk sends it instead of anyone's signed-in key. |
 | `ManagedAIProviderName` | String | The provider name users see. Optional. The default is **Organization AI**. Avoid the name of a built-in provider, such as `OpenAI`: `DefaultEnhancementProvider` always reads a built-in name as that provider. |
 
 When `ManagedAIEndpointURL` and `ManagedAIModel` are both set:
@@ -57,6 +59,29 @@ When `ManagedAIEndpointURL` and `ManagedAIModel` are both set:
 Each request is a `POST` to `chat/completions` with the default cleanup prompt and the custom vocabulary as the system message, and the transcript as the user message, the same as other OpenAI-compatible providers. The body has only `model`, `messages`, and `stream` (`false`). VoiceInk doesn't send `temperature` or other sampling settings, because some models reject them: Claude Haiku 5.5 on Amazon Bedrock rejects a request that sets `temperature`. Set sampling options on the proxy if you need them.
 
 VoiceInk follows a redirect from the endpoint only when it keeps the endpoint's scheme, host, and port. It refuses any other redirect and reports an error, so the token isn't sent to another server. This applies whether or not `DisableCloudServices` is set.
+
+### Let each person sign in
+
+When `ManagedAISignInURL` is set, each person signs in with their Equisolve account to get their own key for the endpoint, so you don't put a shared token in the profile. The provider card on the **Cloud** tab in **AI Models**, and the **Try Enhancement** step in onboarding, show a **Sign in with Equisolve** button. After the person signs in, the card shows **Signed in as** and the account name, with a **Sign Out** button.
+
+Sign-in works like this:
+
+1. VoiceInk opens `<ManagedAISignInURL>/oauth/authorize` in the default browser. The request uses the OAuth 2.0 authorization code flow with PKCE (`S256`), the client ID `voiceink-mac`, and the scope `voiceink`.
+1. The person signs in to Hourglass. Hourglass sends the browser back to `http://127.0.0.1:<port>/oauth/callback`, where VoiceInk listens on a port the system picks, on this Mac only. The browser shows a page that says the tab can be closed. VoiceInk stops listening after five minutes if the browser doesn't come back.
+1. VoiceInk checks the `state` value. It answers a request with any other `state` with an error page and keeps listening, so another program on the Mac can't end the sign-in. Then VoiceInk sends the code to `<ManagedAISignInURL>/oauth/token` and gets an Hourglass access token.
+1. VoiceInk sends the access token to `<ManagedAISignInURL>/api/voiceink/key` and gets the person's key and account name. It then discards the access token, which it never saves or logs.
+
+What VoiceInk stores and sends:
+
+- The key and the account name are stored together in one item in the person's login Keychain. The item isn't synced to other Macs. Sign Out deletes it.
+- Each request to the endpoint sends `ManagedAIToken` if the profile sets it, otherwise the signed-in key. When sign-in is set up and the person hasn't signed in, VoiceInk sends nothing to the endpoint. AI enhancement shows **Sign in with Equisolve to use AI cleanup** and pastes the transcript without changes.
+- When the endpoint answers `401 Unauthorized` to the signed-in key, VoiceInk deletes the key, and a notification asks the person to sign in again.
+- VoiceInk sends the signed-in key only while `ManagedAISignInURL` is set. If you remove `ManagedAISignInURL` from the profile, VoiceInk stops sending a saved key, but doesn't delete it.
+- Requests to the sign-in server follow redirects only within the `ManagedAISignInURL` scheme, host, and port.
+
+To revoke a person's key, revoke it in Hourglass **Settings**, or deactivate the person in Hourglass. A deactivated account can't sign in to get a new key. Signing out in VoiceInk deletes only the copy on that Mac.
+
+Changes to `ManagedAISignInURL` apply while the app runs.
 
 ### Use LiteLLM as the endpoint
 
@@ -82,7 +107,7 @@ When `DisableCloudServices` is also `true`:
 
 When `DisableCloudServices` is `false` or absent, the organization provider is added to the providers users already have, and every other provider stays available.
 
-**Warning:** Any user or process on the Mac can read a value delivered in a configuration profile, including `ManagedAIToken`. Use a token that works only with your proxy and that you can revoke, never an API key for an AI provider.
+**Warning:** Any user or process on the Mac can read a value delivered in a configuration profile, including `ManagedAIToken`. Use a token that works only with your proxy and that you can revoke, never an API key for an AI provider. To avoid a shared token, use [sign-in](#let-each-person-sign-in) instead.
 
 ## Other useful keys
 
@@ -91,7 +116,7 @@ All of these keys are in the `com.equisolve.VoiceInk` domain.
 | Key | Type | Effect |
 | --- | --- | --- |
 | `DisableCloudServices` | Boolean | `true` turns off cloud transcription and cloud AI enhancement, as described on this page. |
-| `ManagedAIEndpointURL`, `ManagedAIModel`, `ManagedAIToken`, `ManagedAIProviderName` | String | Set up an organization AI endpoint, as described in [Provide an organization AI endpoint](#provide-an-organization-ai-endpoint). |
+| `ManagedAIEndpointURL`, `ManagedAIModel`, `ManagedAISignInURL`, `ManagedAIToken`, `ManagedAIProviderName` | String | Set up an organization AI endpoint, as described in [Provide an organization AI endpoint](#provide-an-organization-ai-endpoint). |
 | `IsAutoLearnDictionaryEnabled` | Boolean | `false` turns off Auto-Learn Dictionary. |
 | `enableAnnouncements` | Boolean | `false` turns off in-app announcements. |
 | `VoiceInkChecksForUpdatesOnLaunch` | Boolean | `false` turns off automatic update checks. Equisolve's release never checks, so the key has no effect there. |
@@ -100,7 +125,7 @@ All of these keys are in the `com.equisolve.VoiceInk` domain.
 
 ## Sample configuration profile
 
-This profile sets all of the keys in the previous table and the [default models](#set-default-models): Parakeet for transcription and the organization AI endpoint for enhancement, with VoiceInk Refine downloaded as the fallback. Auto-Learn Dictionary stays off. Replace the `ManagedAI` values with your endpoint, model, and token. If you don't run an AI endpoint, remove those keys and set `DefaultEnhancementProvider` to `VoiceInk Refine`. Upload it to your MDM service as a custom configuration profile, or paste the inner dictionary under `mcx_preference_settings` into a custom settings payload for the `com.equisolve.VoiceInk` domain. Replace the `PayloadUUID` values with your own (run `uuidgen`), and change `PayloadIdentifier` and `PayloadOrganization` to match your organization.
+This profile sets the keys in the previous table, except `ManagedAIToken`, and the [default models](#set-default-models): Parakeet for transcription and the organization AI endpoint for enhancement, with VoiceInk Refine downloaded as the fallback. Each person signs in with Equisolve to get their own key. Auto-Learn Dictionary stays off. Replace the `ManagedAI` values with your endpoint, model, and sign-in URL. For a setup without sign-in, replace `ManagedAISignInURL` with `ManagedAIToken`. If you don't run an AI endpoint, remove the `ManagedAI` keys and set `DefaultEnhancementProvider` to `VoiceInk Refine`. Upload it to your MDM service as a custom configuration profile, or paste the inner dictionary under `mcx_preference_settings` into a custom settings payload for the `com.equisolve.VoiceInk` domain. Replace the `PayloadUUID` values with your own (run `uuidgen`), and change `PayloadIdentifier` and `PayloadOrganization` to match your organization.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -135,8 +160,8 @@ This profile sets all of the keys in the previous table and the [default models]
                                 <string>https://ai.example.com/v1</string>
                                 <key>ManagedAIModel</key>
                                 <string>voiceink-cleanup</string>
-                                <key>ManagedAIToken</key>
-                                <string>PROXY_ONLY_TOKEN</string>
+                                <key>ManagedAISignInURL</key>
+                                <string>https://hourglass.example.com</string>
                                 <key>ManagedAIProviderName</key>
                                 <string>Example AI</string>
                                 <key>IsAutoLearnDictionaryEnabled</key>
@@ -260,3 +285,11 @@ defaults delete com.equisolve.VoiceInk DisableCloudServices
 ```
 
 A value set this way isn't managed, so users can change it the same way.
+
+The other keys on this page work the same way. For example, to try the organization endpoint with sign-in:
+
+```sh
+defaults write com.equisolve.VoiceInk ManagedAIEndpointURL https://ai.example.com/v1
+defaults write com.equisolve.VoiceInk ManagedAIModel voiceink-cleanup
+defaults write com.equisolve.VoiceInk ManagedAISignInURL https://hourglass.example.com
+```
