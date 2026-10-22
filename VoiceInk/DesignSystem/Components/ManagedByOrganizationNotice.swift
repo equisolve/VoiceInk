@@ -78,9 +78,12 @@ struct ManagedAIProviderCard: View {
                         Text("Endpoint").foregroundStyle(.secondary)
                         Text(endpoint.baseURL.absoluteString).textSelection(.enabled)
                     }
-                    GridRow {
-                        Text("Token").foregroundStyle(.secondary)
-                        Text(ManagedAIEndpoint.token().isEmpty ? "Not set" : "Set")
+                    // With sign-in set up, the token row appears only when a profile token overrides the signed-in key.
+                    if endpoint.signInURL == nil || !ManagedAIEndpoint.token().isEmpty {
+                        GridRow {
+                            Text("Token").foregroundStyle(.secondary)
+                            Text(ManagedAIEndpoint.token().isEmpty ? "Not set" : "Set")
+                        }
                     }
                 }
                 .font(.caption)
@@ -93,6 +96,11 @@ struct ManagedAIProviderCard: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+
+                if let signInURL = endpoint.signInURL {
+                    ManagedAISignInRow(signInURL: signInURL)
+                        .padding(.top, 4)
+                }
             }
 
             Spacer(minLength: 0)
@@ -100,5 +108,54 @@ struct ManagedAIProviderCard: View {
         .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(AppMaterialCardBackground(cornerRadius: 10))
+    }
+}
+
+/// "Signed in as" with a Sign Out button, or a "Sign in with Equisolve" button, for an organization endpoint that has
+/// `ManagedAISignInURL` set.
+struct ManagedAISignInRow: View {
+    let signInURL: URL
+    @ObservedObject private var controller = ManagedAISignInController.shared
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let keyAlias = controller.keyAlias {
+                HStack(spacing: 8) {
+                    Image(systemName: "person.crop.circle.badge.checkmark")
+                        .foregroundStyle(.secondary)
+                    Text("Signed in as \(keyAlias)")
+                        .font(.system(size: 12, weight: .medium))
+                        .textSelection(.enabled)
+                    Spacer(minLength: 8)
+                    Button("Sign Out") { controller.signOut() }
+                        .controlSize(.small)
+                }
+            } else if controller.isSigningIn {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text("Finish signing in in your browser.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer(minLength: 8)
+                    Button("Cancel") { controller.cancelSignIn() }
+                        .controlSize(.small)
+                }
+            } else {
+                Text("Sign in to get your own key for AI cleanup.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Sign in with Equisolve") { controller.signIn(signInURL: signInURL) }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+
+            if let errorMessage = controller.errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .onAppear { controller.reload() }
     }
 }

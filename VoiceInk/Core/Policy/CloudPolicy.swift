@@ -103,8 +103,19 @@ enum CloudPolicy {
     /// True when the URL has the managed endpoint's scheme, host, and port, and no user info. The managed provider
     /// follows a redirect only to such a URL, so the token can't be forwarded to another server.
     static func hasManagedEndpointOrigin(_ url: URL, managedEndpoint: ManagedAIEndpoint) -> Bool {
+        hasSameOrigin(url, as: managedEndpoint.baseURL)
+    }
+
+    /// Signing in with Equisolve talks only to `ManagedAISignInURL`, which is the organization's own service, so it's
+    /// allowed whether or not cloud services are off. A request, or a redirect, must keep the sign-in URL's scheme,
+    /// host, and port, and the sign-in URL must use HTTPS.
+    static func isManagedSignInRequestAllowed(_ url: URL, signInURL: URL) -> Bool {
+        ManagedAIEndpoint.isValidSignInURL(signInURL) && hasSameOrigin(url, as: signInURL)
+    }
+
+    private static func hasSameOrigin(_ url: URL, as base: URL) -> Bool {
         guard let candidate = URLComponents(url: url, resolvingAgainstBaseURL: true),
-            let managed = URLComponents(url: managedEndpoint.baseURL, resolvingAgainstBaseURL: false),
+            let managed = URLComponents(url: base, resolvingAgainstBaseURL: false),
             let scheme = candidate.scheme?.lowercased(), scheme == managed.scheme?.lowercased(),
             let host = candidate.host?.lowercased(), !host.isEmpty, host == managed.host?.lowercased(),
             candidate.user == nil, candidate.password == nil

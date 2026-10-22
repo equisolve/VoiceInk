@@ -91,11 +91,10 @@ extension AIService {
             guard let managedEndpoint else {
                 throw EnhancementError.notConfigured
             }
-            // The token is read from preferences for this request only and isn't stored or logged. The client sends
-            // no temperature and follows redirects only within the endpoint.
+            // The token, from preferences or from signing in, is read for this request only and isn't logged. The
+            // client sends no temperature and follows redirects only within the endpoint.
             result = try await ManagedAIClient.chatCompletion(
                 endpoint: managedEndpoint,
-                token: ManagedAIEndpoint.token(),
                 messages: messages,
                 systemPrompt: systemPrompt,
                 timeout: timeout

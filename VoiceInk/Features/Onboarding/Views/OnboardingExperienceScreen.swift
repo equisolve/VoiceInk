@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct OnboardingExperienceScreen: View {
+    @ObservedObject private var cloudPolicyMonitor = CloudPolicyMonitor.shared
     let step: OnboardingExperienceStep
     let isInIntroPhase: Bool
     let shortcutAction: ShortcutAction
@@ -64,13 +65,20 @@ struct OnboardingExperienceScreen: View {
             contentMaxWidth: 700,
             showsHeader: true
         ) {
-            OnboardingExperienceCard(
-                step: step,
-                shortcutAction: shortcutAction,
-                hasShortcut: hasShortcut,
-                text: $text,
-                onShortcutChanged: onShortcutChanged
-            )
+            VStack(spacing: 16) {
+                // Enhancement through the organization endpoint needs a signed-in key when sign-in is set up.
+                if step.kind == .enhance, let endpoint = cloudPolicyMonitor.managedEndpoint, endpoint.signInURL != nil {
+                    ManagedAIProviderCard(endpoint: endpoint)
+                }
+
+                OnboardingExperienceCard(
+                    step: step,
+                    shortcutAction: shortcutAction,
+                    hasShortcut: hasShortcut,
+                    text: $text,
+                    onShortcutChanged: onShortcutChanged
+                )
+            }
         } bottomBar: {
             OnboardingBottomBar(
                 leadingTitle: "Back",
