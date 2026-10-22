@@ -42,6 +42,7 @@ SKIP_NOTARIZATION=0
 ALLOW_DIRTY=0
 SETUP_NOTARIZATION=0
 VERIFY_APP=""
+BUILD_NUMBER=""
 
 usage() {
     cat <<'EOF'
@@ -65,6 +66,9 @@ Options:
   --notary-profile <name>     notarytool Keychain profile.
                               Default: VoiceInk-Equisolve-Notarization.
   --output-dir <directory>    Override the timestamped Downloads directory.
+  --build-number <number>     Set CFBundleVersion. Use a number higher than the last
+                              Equisolve release so Jamf and the installer see a new
+                              version. Default: the project's CURRENT_PROJECT_VERSION.
   --skip-notarization         Sign but don't submit to Apple. The result is a test build.
   --allow-dirty               Permit a dirty Git working tree.
   --setup-notarization        Store notarization credentials in the Keychain and exit.
@@ -162,6 +166,12 @@ while [[ $# -gt 0 ]]; do
         --output-dir)
             [[ $# -ge 2 ]] || fail "--output-dir requires a path"
             OUTPUT_DIR="$2"
+            shift 2
+            ;;
+        --build-number)
+            [[ $# -ge 2 ]] || fail "--build-number requires a value"
+            [[ "$2" =~ ^[1-9][0-9]*$ ]] || fail "--build-number must be a positive integer"
+            BUILD_NUMBER="$2"
             shift 2
             ;;
         --skip-notarization)
@@ -284,6 +294,7 @@ xcodebuild archive \
     CODE_SIGN_ENTITLEMENTS="" \
     DEVELOPMENT_TEAM="" \
     SWIFT_ACTIVE_COMPILATION_CONDITIONS='$(inherited) LOCAL_BUILD' \
+    ${BUILD_NUMBER:+CURRENT_PROJECT_VERSION="$BUILD_NUMBER"} \
     -skipPackagePluginValidation \
     -skipMacroValidation
 
