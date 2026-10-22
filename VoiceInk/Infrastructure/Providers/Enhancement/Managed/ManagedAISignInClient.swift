@@ -40,7 +40,8 @@ enum ManagedAISignInClient {
 
         let pkce = PKCE.generate()
         let state = randomURLSafeString(byteCount: 32)
-        let listener = OAuthLoopbackListener(callbackPath: callbackPath, timeout: callbackTimeout)
+        let listener = OAuthLoopbackListener(
+            callbackPath: callbackPath, expectedState: state, timeout: callbackTimeout)
         defer { listener.cancel() }
 
         let port = try await listener.start()
@@ -200,6 +201,8 @@ enum ManagedAISignInClient {
         do {
             (data, response) = try await session.data(for: request)
         } catch let error as URLError {
+            // Canceling sign-in cancels the request too. That's not a network problem, so report it as a cancellation.
+            if error.code == .cancelled || Task.isCancelled { throw CancellationError() }
             logger.error("A sign-in request failed: \(error.localizedDescription, privacy: .public)")
             throw ManagedAISignInError.networkError
         }

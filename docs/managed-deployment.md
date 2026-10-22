@@ -68,7 +68,7 @@ Sign-in works like this:
 
 1. VoiceInk opens `<ManagedAISignInURL>/oauth/authorize` in the default browser. The request uses the OAuth 2.0 authorization code flow with PKCE (`S256`), the client ID `voiceink-mac`, and the scope `voiceink`.
 1. The person signs in to Hourglass. Hourglass sends the browser back to `http://127.0.0.1:<port>/oauth/callback`, where VoiceInk listens on a port the system picks, on this Mac only. The browser shows a page that says the tab can be closed. VoiceInk stops listening after five minutes if the browser doesn't come back.
-1. VoiceInk checks the `state` value, then sends the code to `<ManagedAISignInURL>/oauth/token` and gets an Hourglass access token.
+1. VoiceInk checks the `state` value. It answers a request with any other `state` with an error page and keeps listening, so another program on the Mac can't end the sign-in. Then VoiceInk sends the code to `<ManagedAISignInURL>/oauth/token` and gets an Hourglass access token.
 1. VoiceInk sends the access token to `<ManagedAISignInURL>/api/voiceink/key` and gets the person's key and account name. It then discards the access token, which it never saves or logs.
 
 What VoiceInk stores and sends:
@@ -76,7 +76,7 @@ What VoiceInk stores and sends:
 - The key and the account name are stored together in one item in the person's login Keychain. The item isn't synced to other Macs. Sign Out deletes it.
 - Each request to the endpoint sends `ManagedAIToken` if the profile sets it, otherwise the signed-in key. When sign-in is set up and the person hasn't signed in, VoiceInk sends nothing to the endpoint. AI enhancement shows **Sign in with Equisolve to use AI cleanup** and pastes the transcript without changes.
 - When the endpoint answers `401 Unauthorized` to the signed-in key, VoiceInk deletes the key, and a notification asks the person to sign in again.
-- VoiceInk sends the signed-in key only while `ManagedAISignInURL` is set. If you remove the key from the profile, VoiceInk stops sending a saved key, but doesn't delete it.
+- VoiceInk sends the signed-in key only while `ManagedAISignInURL` is set. If you remove `ManagedAISignInURL` from the profile, VoiceInk stops sending a saved key, but doesn't delete it.
 - Requests to the sign-in server follow redirects only within the `ManagedAISignInURL` scheme, host, and port.
 
 To revoke a person's key, revoke it in Hourglass **Settings**, or deactivate the person in Hourglass. A deactivated account can't sign in to get a new key. Signing out in VoiceInk deletes only the copy on that Mac.

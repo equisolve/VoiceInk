@@ -50,8 +50,12 @@ enum ManagedAIClient {
                 endpoint: endpoint, token: credential.token, messages: messages, systemPrompt: systemPrompt,
                 timeout: timeout, maxRetries: maxRetries)
         } catch let error as LLMKitError {
-            if case .httpError(401, _) = error, case .signedInKey = credential {
-                keyStore.delete()
+            if case .httpError(401, _) = error, case .signedInKey(let sentKey) = credential {
+                // Delete the key only if it's still the one that was rejected. The person may have signed in again
+                // while this request was running, and that new key stays.
+                if keyStore.load()?.apiKey == sentKey {
+                    keyStore.delete()
+                }
                 throw ManagedAISignInError.signInExpired
             }
             throw error

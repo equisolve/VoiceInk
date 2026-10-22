@@ -38,7 +38,13 @@ final class ManagedEndpointStubProtocol: URLProtocol {
 
     static func stop() {
         ManagedAIClient.makeSessionConfiguration = { .ephemeral }
+        lock.lock()
+        beforeReply = nil
+        lock.unlock()
     }
+
+    /// Runs after a request arrives and before its reply is sent, to change state while the request is in flight.
+    nonisolated(unsafe) static var beforeReply: (() -> Void)?
 
     static var requests: [Recorded] {
         lock.lock()
@@ -59,7 +65,9 @@ final class ManagedEndpointStubProtocol: URLProtocol {
                 body: Self.bodyJSON(request)
             ))
         let reply = Self.replies[url.absoluteString] ?? .status(404)
+        let beforeReply = Self.beforeReply
         Self.lock.unlock()
+        beforeReply?()
 
         switch reply {
         case .completion(let text):

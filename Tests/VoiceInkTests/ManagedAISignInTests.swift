@@ -212,7 +212,7 @@ final class ManagedAISignInTests: XCTestCase {
     }
 
     func testLoopbackListenerAnswersTheCallbackAndIgnoresOtherPaths() async throws {
-        let listener = OAuthLoopbackListener(callbackPath: "/oauth/callback", timeout: 30)
+        let listener = OAuthLoopbackListener(callbackPath: "/oauth/callback", expectedState: "s1", timeout: 30)
         let port = try await listener.start()
         defer { listener.cancel() }
 
@@ -229,8 +229,45 @@ final class ManagedAISignInTests: XCTestCase {
         XCTAssertEqual(target, "/oauth/callback?code=abc&state=s1")
     }
 
+    /// Another program that finds the port can't end the sign-in by sending a callback without the right state.
+    func testLoopbackListenerKeepsWaitingAfterAnotherState() async throws {
+        let listener = OAuthLoopbackListener(callbackPath: "/oauth/callback", expectedState: "s1", timeout: 30)
+        let port = try await listener.start()
+        defer { listener.cancel() }
+
+        let session = URLSession(configuration: .ephemeral)
+        for query in ["code=forged&state=other", "error=access_denied&state=other", "code=forged"] {
+            let (_, response) = try await session.data(
+                from: URL(string: "http://127.0.0.1:\(port)/oauth/callback?\(query)")!)
+            XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 400, query)
+        }
+
+        let (_, response) = try await session.data(
+            from: URL(string: "http://127.0.0.1:\(port)/oauth/callback?code=abc&state=s1")!)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+
+        let target = try await listener.waitForCallback()
+        XCTAssertEqual(target, "/oauth/callback?code=abc&state=s1")
+    }
+
+    /// An error with the right state still ends the wait, so the person sees why sign-in failed.
+    func testLoopbackListenerReturnsAnErrorWithTheRightState() async throws {
+        let listener = OAuthLoopbackListener(callbackPath: "/oauth/callback", expectedState: "s1", timeout: 30)
+        let port = try await listener.start()
+        defer { listener.cancel() }
+
+        let (_, response) = try await URLSession(configuration: .ephemeral).data(
+            from: URL(string: "http://127.0.0.1:\(port)/oauth/callback?error=access_denied&state=s1")!)
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+
+        let target = try await listener.waitForCallback()
+        XCTAssertThrowsError(
+            try ManagedAISignInClient.authorizationCode(fromCallbackTarget: target, expectedState: "s1")
+        ) { XCTAssertEqual($0 as? ManagedAISignInError, .authorizationDenied) }
+    }
+
     func testLoopbackListenerTimesOut() async throws {
-        let listener = OAuthLoopbackListener(callbackPath: "/oauth/callback", timeout: 0.2)
+        let listener = OAuthLoopbackListener(callbackPath: "/oauth/callback", expectedState: "s1", timeout: 0.2)
         _ = try await listener.start()
 
         do {
@@ -239,6 +276,70 @@ final class ManagedAISignInTests: XCTestCase {
         } catch {
             XCTAssertEqual(error as? ManagedAISignInError, .timedOut)
         }
+    }
+
+    func testCancelingTheWaitStopsTheListener() async throws {
+        let listener = OAuthLoopbackListener(callbackPath: "/oauth/callback", expectedState: "s1", timeout: 30)
+        let port = try await listener.start()
+
+        let wait = Task { try await listener.waitForCallback() }
+        try await Task.sleep(nanoseconds: 100_000_000)
+        let canceledAt = Date()
+        wait.cancel()
+
+        do {
+            _ = try await wait.value
+            XCTFail("Waiting should be canceled")
+        } catch {
+            XCTAssertTrue(error is CancellationError, "Unexpected error: \(error)")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(canceledAt), 2)
+
+        let session = URLSession(configuration: .ephemeral)
+        do {
+            _ = try await session.data(
+                from: URL(string: "http://127.0.0.1:\(port)/oauth/callback?code=abc&state=s1")!)
+            XCTFail("The listener should be closed")
+        } catch {}
+    }
+
+    func testCancelingBeforeStartFailsTheStart() async {
+        let listener = OAuthLoopbackListener(callbackPath: "/oauth/callback", expectedState: "s1", timeout: 30)
+        let start = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await listener.start()
+        }
+
+        do {
+            _ = try await start.value
+            XCTFail("Starting should be canceled")
+        } catch {
+            XCTAssertTrue(error is CancellationError, "Unexpected error: \(error)")
+        }
+    }
+
+    /// Cancel in the settings ends the whole sign-in promptly while VoiceInk waits for the browser.
+    func testCancelingSignInEndsItPromptly() async throws {
+        var opened = false
+        let signIn = Task { @MainActor [signInURL] in
+            try await ManagedAISignInClient.signIn(signInURL: signInURL, callbackTimeout: 30) { _ in
+                opened = true
+                return true
+            }
+        }
+        while !opened {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        let canceledAt = Date()
+        signIn.cancel()
+
+        do {
+            _ = try await signIn.value
+            XCTFail("Sign-in should be canceled")
+        } catch {
+            XCTAssertTrue(error is CancellationError, "Unexpected error: \(error)")
+        }
+        XCTAssertLessThan(Date().timeIntervalSince(canceledAt), 2)
     }
 
     // MARK: - Token and key requests
@@ -433,6 +534,25 @@ final class ManagedAISignInTests: XCTestCase {
             XCTAssertEqual(error as? ManagedAISignInError, .signInExpired)
         }
         XCTAssertNil(keyStore.load(), "The rejected key is deleted")
+    }
+
+    /// When the person signs in again while a request with the old key is running, the 401 for the old key leaves the
+    /// new key in place.
+    func testUnauthorizedOldKeyKeepsANewerKey() async {
+        keyStore.save(ManagedAISignedInKey(apiKey: "sk-old", keyAlias: "pat@example.com"))
+        let newKey = ManagedAISignedInKey(apiKey: "sk-new", keyAlias: "pat@example.com")
+        let store = keyStore!
+        ManagedEndpointStubProtocol.beforeReply = { store.save(newKey) }
+        ManagedEndpointStubProtocol.start(replies: [completionsURL: .status(401)])
+
+        do {
+            _ = try await complete()
+            XCTFail("A 401 should throw")
+        } catch {
+            XCTAssertEqual(error as? ManagedAISignInError, .signInExpired)
+        }
+        XCTAssertEqual(ManagedEndpointStubProtocol.requests.first?.authorization, "Bearer sk-old")
+        XCTAssertEqual(keyStore.load(), newKey, "The newer key stays")
     }
 
     func testUnauthorizedProfileTokenKeepsSignedInKey() async {
