@@ -132,6 +132,16 @@ verify_app() {
     printf 'Checked %s Mach-O files.\n' "$count"
 }
 
+# Checks that an installer package has a valid signature from Equisolve's team.
+check_pkg_signature() {
+    local pkg="$1" output
+
+    log "Checking the installer package signature"
+    output="$(pkgutil --check-signature "$pkg")" || fail "Package signature check failed: $pkg"
+    printf '%s\n' "$output"
+    [[ "$output" == *"($TEAM_ID)"* ]] || fail "Package isn't signed by team $TEAM_ID: $pkg"
+}
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --identity)
@@ -228,8 +238,10 @@ if [[ "$AD_HOC" == "0" ]]; then
     security find-identity -v -p codesigning | grep -F "$IDENTITY" >/dev/null \
         || fail "Signing identity is unavailable: $IDENTITY"
     # Installer certificates don't match the codesigning policy, so search all identities.
-    security find-identity -v | grep -F "$INSTALLER_IDENTITY" >/dev/null \
+    installer_identity_line="$(security find-identity -v | grep -F "$INSTALLER_IDENTITY" | head -n 1)" \
         || fail "Installer signing identity is unavailable: $INSTALLER_IDENTITY"
+    [[ "$installer_identity_line" == *"Developer ID Installer:"*"($TEAM_ID)"* ]] \
+        || fail "Installer signing identity isn't a Developer ID Installer for team $TEAM_ID: $INSTALLER_IDENTITY"
 fi
 
 if [[ "$SKIP_NOTARIZATION" == "0" ]]; then
@@ -352,6 +364,14 @@ else
     PKG_ROOT="$WORK_DIR/pkg-root"
     COMPONENT_PLIST="$WORK_DIR/component.plist"
     COMPONENT_PKG="$WORK_DIR/VoiceInk-component.pkg"
+    PKG_EXPANDED="$WORK_DIR/pkg-expanded"
+
+    # The staged and expanded copies of VoiceInk.app would stay registered with Launch
+    # Services as extra copies of the bundle ID, so remove them on every exit path.
+    cleanup_pkg_work() {
+        rm -rf "$PKG_ROOT" "$PKG_EXPANDED" "$COMPONENT_PKG" "$COMPONENT_PLIST"
+    }
+    trap cleanup_pkg_work EXIT
 
     log "Building $DIST_PKG"
     mkdir -p "$PKG_ROOT"
@@ -371,7 +391,6 @@ else
     # Expand the package to check its contents. The payload listing can't be used for this:
     # it shows extended attributes, such as com.apple.provenance, as ._ entries that Installer
     # restores as attributes, not files.
-    PKG_EXPANDED="$WORK_DIR/pkg-expanded"
     pkgutil --expand-full "$COMPONENT_PKG" "$PKG_EXPANDED"
     [[ ! -e "$PKG_EXPANDED/Scripts" ]] || fail "The package has install scripts: $COMPONENT_PKG"
     payload_entries="$(find "$PKG_EXPANDED/Payload" -mindepth 1 -maxdepth 1)"
@@ -385,17 +404,17 @@ else
         --sign "$INSTALLER_IDENTITY" \
         --timestamp \
         "$DIST_PKG"
+    cleanup_pkg_work
+    trap - EXIT
+
+    check_pkg_signature "$DIST_PKG"
 
     if [[ "$SKIP_NOTARIZATION" == "0" ]]; then
         log "Submitting the installer package for notarization"
         xcrun notarytool submit "$DIST_PKG" --keychain-profile "$NOTARY_PROFILE" --wait
         xcrun stapler staple "$DIST_PKG"
         xcrun stapler validate "$DIST_PKG"
-    fi
-
-    log "Checking the installer package signature"
-    pkgutil --check-signature "$DIST_PKG" || fail "Package signature check failed: $DIST_PKG"
-    if [[ "$SKIP_NOTARIZATION" == "0" ]]; then
+        check_pkg_signature "$DIST_PKG"
         spctl -a -vvv -t install "$DIST_PKG" || fail "Gatekeeper rejected the package: $DIST_PKG"
     fi
     DIST_PKG_SHA256="$(shasum -a 256 "$DIST_PKG" | awk '{print $1}')"
