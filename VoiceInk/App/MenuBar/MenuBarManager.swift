@@ -1,15 +1,51 @@
 import AppKit
 import SwiftUI
 
-class MenuBarManager: ObservableObject {
+/// Sets whether VoiceInk runs from the menu bar without a Dock icon. `LiveManagedDefaultsTarget` uses it for
+/// `DefaultMenuBarOnly`; tests use a stand-in.
+protocol MenuBarOnlySetting: AnyObject {
+    func setMenuBarOnlyKeepingWindows(_ menuBarOnly: Bool)
+}
+
+class MenuBarManager: ObservableObject, MenuBarOnlySetting {
     @Published var isMenuBarOnly: Bool {
         didSet {
             UserDefaults.standard.set(isMenuBarOnly, forKey: "IsMenuBarOnly")
-            applyActivationPolicy()
+            if keepsWindowsOnNextChange {
+                keepsWindowsOnNextChange = false
+                applyActivationPolicyKeepingWindows()
+            } else {
+                applyActivationPolicy()
+            }
         }
     }
 
     private var engine: VoiceInkEngine?
+    private var keepsWindowsOnNextChange = false
+
+    /// Changes the setting like the Hide Dock Icon toggle, but leaves open windows up. While a window is open, the
+    /// Dock icon stays; when the last one closes, `userFacingWindowWillClose` hides the Dock icon, the same as it
+    /// does after the person opens a window from the menu bar.
+    func setMenuBarOnlyKeepingWindows(_ menuBarOnly: Bool) {
+        guard menuBarOnly != isMenuBarOnly else { return }
+        keepsWindowsOnNextChange = true
+        isMenuBarOnly = menuBarOnly
+    }
+
+    private func applyActivationPolicyKeepingWindows() {
+        let applyPolicy = { [weak self] in
+            guard let self else { return }
+            if !self.isMenuBarOnly || WindowDiagnostics.visibleUserFacingWindows().isEmpty {
+                NSApplication.shared.setActivationPolicy(self.configuredActivationPolicy)
+            }
+        }
+
+        if Thread.isMainThread {
+            applyPolicy()
+        } else {
+            DispatchQueue.main.async(execute: applyPolicy)
+        }
+    }
     private var configuredActivationPolicy: NSApplication.ActivationPolicy {
         isMenuBarOnly ? .accessory : .regular
     }

@@ -136,7 +136,7 @@ All of these keys are in the `com.equisolve.VoiceInk` domain.
 
 ## Sample configuration profile
 
-This profile sets the keys in the previous table, except `ManagedAIToken`, and the [default models](#set-default-models): Parakeet for transcription and the organization AI endpoint for enhancement, locked so people can't choose another provider, with VoiceInk Refine downloaded as the fallback. Each person signs in with Equisolve to get their own key. Auto-Learn Dictionary stays off. Replace the `ManagedAI` values with your endpoint, model, and sign-in URL. For a setup without sign-in, replace `ManagedAISignInURL` with `ManagedAIToken`. If you don't run an AI endpoint, remove the `ManagedAI` keys and set `DefaultEnhancementProvider` to `VoiceInk Refine`. Upload it to your MDM service as a custom configuration profile, or paste the inner dictionary under `mcx_preference_settings` into a custom settings payload for the `com.equisolve.VoiceInk` domain. Replace the `PayloadUUID` values with your own (run `uuidgen`), and change `PayloadIdentifier` and `PayloadOrganization` to match your organization.
+This profile sets the keys in the previous table, except `ManagedAIToken`, and the [default models](#set-default-models): Parakeet for transcription and the organization AI endpoint for enhancement, locked so people can't choose another provider, with VoiceInk Refine downloaded as the fallback. It also hides the Dock icon and opens VoiceInk at login, which each person can change. Each person signs in with Equisolve to get their own key. Auto-Learn Dictionary stays off. Replace the `ManagedAI` values with your endpoint, model, and sign-in URL. For a setup without sign-in, replace `ManagedAISignInURL` with `ManagedAIToken`. If you don't run an AI endpoint, remove the `ManagedAI` keys and set `DefaultEnhancementProvider` to `VoiceInk Refine`. Upload it to your MDM service as a custom configuration profile, or paste the inner dictionary under `mcx_preference_settings` into a custom settings payload for the `com.equisolve.VoiceInk` domain. Replace the `PayloadUUID` values with your own (run `uuidgen`), and change `PayloadIdentifier` and `PayloadOrganization` to match your organization.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -202,6 +202,10 @@ This profile sets the keys in the previous table, except `ManagedAIToken`, and t
                                 </array>
                                 <key>DefaultShortcut</key>
                                 <string>rightOption</string>
+                                <key>DefaultMenuBarOnly</key>
+                                <true/>
+                                <key>DefaultLaunchAtLogin</key>
+                                <true/>
                                 <key>ManagedDefaultsVersion</key>
                                 <integer>1</integer>
                             </dict>
@@ -249,7 +253,9 @@ These keys set starting choices that users can change later. They are separate f
 | `DefaultEnhancementEnabled` | Boolean | `true` turns on AI enhancement, and `false` turns it off. |
 | `AutoDownloadModels` | Array of strings | Local models to download in the background. Use transcription model IDs, and `VoiceInk Refine V1` for VoiceInk Refine. |
 | `DefaultShortcut` | String | The recording shortcut, as a single key: `rightOption`, `leftOption`, `rightCommand`, `rightControl`, `leftControl`, `rightShift`, or `fn`. Onboarding selects it and labels it **Recommended by your organization**, and the user can pick another. |
-| `ManagedDefaultsVersion` | Integer | Required to apply the choices. VoiceInk applies the choices once for each version. |
+| `DefaultMenuBarOnly` | Boolean | `true` hides the Dock icon, so VoiceInk runs from the menu bar, and `false` shows it. The user can change it with **Hide Dock Icon** in **Settings**. Doesn't use `ManagedDefaultsVersion`; see [Dock icon and Launch at Login](#dock-icon-and-launch-at-login). |
+| `DefaultLaunchAtLogin` | Boolean | `true` opens VoiceInk when the user logs in, and `false` stops it from opening. The user can change it with **Launch at Login** in **Settings**. Doesn't use `ManagedDefaultsVersion`; see [Dock icon and Launch at Login](#dock-icon-and-launch-at-login). |
+| `ManagedDefaultsVersion` | Integer | Required to apply the other choices. VoiceInk applies them once for each version. |
 
 ### How VoiceInk applies the defaults
 
@@ -262,6 +268,34 @@ These keys set starting choices that users can change later. They are separate f
 - **Shortcut.** VoiceInk sets `DefaultShortcut` as the recording shortcut only when the user has no recording shortcut, including after a version bump, so it never replaces one the user chose or removed. The user can always change it. On the onboarding step where the user picks a shortcut, VoiceInk starts with this one unless another action already uses it. VoiceInk ignores any other value and writes a log message. `DefaultShortcut` alone doesn't make onboarding skip entering an API key.
 - **Organization endpoint.** When `DefaultEnhancementProvider` is `Managed`, VoiceInk selects the organization provider if `ManagedAIEndpointURL` and `ManagedAIModel` are set and the endpoint is allowed (with `DisableCloudServices` on, it must use `https` or a loopback host). VoiceInk doesn't check that the endpoint answers. Otherwise it selects VoiceInk Refine if the Mac can run it, writes a log message, and still applies `DefaultEnhancementEnabled`. On a Mac that can't run VoiceInk Refine either, VoiceInk ignores both keys.
 - **No keys.** When none of these keys are set, VoiceInk behaves as it does without a profile.
+
+### Dock icon and Launch at Login
+
+`DefaultMenuBarOnly` and `DefaultLaunchAtLogin` apply on their own schedule, not once per `ManagedDefaultsVersion`:
+
+- **Once for each value.** VoiceInk applies each key the first time it sees it, at launch or when the profile changes, and records the value it applied. It applies the key again only when the profile changes to a different value. Raising `ManagedDefaultsVersion` doesn't apply these keys again, and they don't need a version.
+- **Existing and new installs.** People who already use VoiceInk get the setting once, the same as a new install. After that, a user's changes stay, even across restarts.
+- **After onboarding.** On a new install, VoiceInk applies these keys when the user finishes onboarding, so onboarding opens in its window with the Dock icon showing.
+- **Right away.** VoiceInk changes the setting and the login item while it runs. Unlike the **Hide Dock Icon** switch in **Settings**, `DefaultMenuBarOnly` doesn't close an open window, such as the one where the user finished onboarding. The Dock icon stays until the user closes the last VoiceInk window, and then it's hidden.
+- **Login item failures.** If macOS can't add or remove the login item, VoiceInk writes a log message and tries again at the next launch, not sooner. A login item that waits for approval in **System Settings > General > Login Items** counts as added. If the user changes **Launch at Login** while VoiceInk is applying the key, the user's choice stays and VoiceInk records the key as applied.
+- **No keys.** When the profile doesn't set a key, VoiceInk doesn't change that setting.
+
+#### Approve the login item ahead of time (optional)
+
+When VoiceInk adds its login item, macOS shows a **Login Item Added** notification. To approve VoiceInk's login item for your users, deploy a Managed Login Items payload (`com.apple.servicemanagement`, macOS 13 or later) that matches VoiceInk. Apple describes the payload as one that "auto-enables and auto-allows matched items" ([ServiceManagementManagedLoginItems](https://developer.apple.com/documentation/devicemanagement/servicemanagementmanagedloginitems)).
+
+The payload doesn't hide every notification. According to Apple's [Manage login items and background tasks on Mac](https://support.apple.com/guide/deployment/manage-login-items-background-tasks-mac-depdca572563/web), users get a single notification that managed items are being installed and can be viewed in System Settings, instead of one for each item.
+
+Add the payload to a configuration profile in your MDM service, such as Jamf Pro, with one rule in its `Rules` array. The keys are from Apple's [ServiceManagementManagedLoginItems.Rule](https://developer.apple.com/documentation/devicemanagement/servicemanagementmanagedloginitems/rule):
+
+| Key | Value |
+| --- | --- |
+| `RuleType` | `BundleIdentifier` |
+| `RuleValue` | `com.equisolve.VoiceInk` |
+| `TeamIdentifier` | `3MMFZ6XFFA` |
+| `Comment` | `VoiceInk` (optional) |
+
+The team identifier limits the rule to copies of VoiceInk that Equisolve signed. For a build with another bundle ID, use that bundle ID and the team that signed it.
 
 ### Lock the AI provider
 

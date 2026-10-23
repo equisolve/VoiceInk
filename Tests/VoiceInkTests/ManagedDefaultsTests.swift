@@ -38,6 +38,22 @@ private final class FakeManagedDefaultsTarget: ManagedDefaultsTarget {
     func applyEnhancementLock(_ lock: EnhancementProviderLock) {
         locks.append(lock)
     }
+
+    var menuBarOnlyChanges: [Bool] = []
+    var launchAtLoginChanges: [Bool] = []
+    var launchAtLoginSucceeds = true
+    /// Runs while a Launch at Login change is in progress, before it finishes.
+    var whileSettingLaunchAtLogin: (() -> Void)?
+
+    func setMenuBarOnly(_ menuBarOnly: Bool) { menuBarOnlyChanges.append(menuBarOnly) }
+
+    func setLaunchAtLogin(_ enabled: Bool) async -> Bool {
+        launchAtLoginChanges.append(enabled)
+        await Task.yield()
+        whileSettingLaunchAtLogin?()
+        whileSettingLaunchAtLogin = nil
+        return launchAtLoginSucceeds
+    }
 }
 
 /// Every test reads and writes its own defaults suite, never the app's settings.
@@ -201,6 +217,211 @@ final class ManagedDefaultsTests: XCTestCase {
         XCTAssertEqual(target.startedDownloads, [])
         XCTAssertNil(defaults.object(forKey: ManagedDefaults.appliedVersionKey))
         XCTAssertEqual(target.recordingShortcuts, [])
+    }
+
+    // MARK: - Dock icon and Launch at Login
+
+    /// Applies the profile the way a launch does, and waits for the Launch at Login change to finish.
+    private func launch() async {
+        let applier = makeApplier()
+        applier.apply()
+        await finishLaunchAtLogin(applier)
+    }
+
+    /// Waits for every Launch at Login change the applier starts, including one it starts after the last finishes.
+    private func finishLaunchAtLogin(_ applier: ManagedDefaultsApplier) async {
+        while let task = applier.launchAtLoginTask {
+            await task.value
+        }
+    }
+
+    /// Starts a new launch with the same settings and a fresh app.
+    private func relaunchTarget() {
+        target = FakeManagedDefaultsTarget()
+    }
+
+    func testDockIconAndLaunchAtLoginApplyOnce() async {
+        defaults.set(true, forKey: ManagedDefaults.menuBarOnlyKey)
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+
+        await launch()
+        XCTAssertEqual(target.menuBarOnlyChanges, [true])
+        XCTAssertEqual(target.launchAtLoginChanges, [true])
+        XCTAssertEqual(defaults.object(forKey: ManagedDefaults.appliedMenuBarOnlyKey) as? Bool, true)
+        XCTAssertEqual(defaults.object(forKey: ManagedDefaults.appliedLaunchAtLoginKey) as? Bool, true)
+
+        await launch()
+        await launch()
+        XCTAssertEqual(target.menuBarOnlyChanges, [true], "The same value must not be applied twice")
+        XCTAssertEqual(target.launchAtLoginChanges, [true], "The same value must not be applied twice")
+    }
+
+    func testPersonsDockIconAndLaunchAtLoginChoicesSurviveRelaunch() async {
+        defaults.set(true, forKey: ManagedDefaults.menuBarOnlyKey)
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+        await launch()
+
+        // The person turns the Dock icon back on and Launch at Login off, then VoiceInk relaunches with the same
+        // profile. Nothing calls back into the app to undo either choice.
+        relaunchTarget()
+        await launch()
+        XCTAssertEqual(target.menuBarOnlyChanges, [])
+        XCTAssertEqual(target.launchAtLoginChanges, [])
+    }
+
+    func testChangedProfileValueAppliesAgain() async {
+        defaults.set(true, forKey: ManagedDefaults.menuBarOnlyKey)
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+        await launch()
+
+        defaults.set(false, forKey: ManagedDefaults.menuBarOnlyKey)
+        defaults.set(false, forKey: ManagedDefaults.launchAtLoginKey)
+        await launch()
+        XCTAssertEqual(target.menuBarOnlyChanges, [true, false])
+        XCTAssertEqual(target.launchAtLoginChanges, [true, false])
+
+        defaults.set(true, forKey: ManagedDefaults.menuBarOnlyKey)
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+        await launch()
+        XCTAssertEqual(target.menuBarOnlyChanges, [true, false, true])
+        XCTAssertEqual(target.launchAtLoginChanges, [true, false, true])
+    }
+
+    func testAbsentDockIconAndLaunchAtLoginKeysChangeNothing() async {
+        await launch()
+
+        XCTAssertEqual(target.menuBarOnlyChanges, [])
+        XCTAssertEqual(target.launchAtLoginChanges, [])
+        XCTAssertNil(defaults.object(forKey: ManagedDefaults.appliedMenuBarOnlyKey))
+        XCTAssertNil(defaults.object(forKey: ManagedDefaults.appliedLaunchAtLoginKey))
+    }
+
+    func testDockIconAndLaunchAtLoginIgnoreTheVersion() async {
+        // A version alone applies neither, and bumping it doesn't apply them again.
+        setProfile(version: 1)
+        await launch()
+        XCTAssertEqual(target.menuBarOnlyChanges, [])
+        XCTAssertEqual(target.launchAtLoginChanges, [])
+
+        defaults.set(true, forKey: ManagedDefaults.menuBarOnlyKey)
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+        await launch()
+        XCTAssertEqual(target.menuBarOnlyChanges, [true])
+        XCTAssertEqual(target.launchAtLoginChanges, [true])
+
+        defaults.set(2, forKey: ManagedDefaults.versionKey)
+        await launch()
+        defaults.set(3, forKey: ManagedDefaults.appliedVersionKey)
+        defaults.set(5, forKey: ManagedDefaults.versionKey)
+        await launch()
+        XCTAssertEqual(target.menuBarOnlyChanges, [true])
+        XCTAssertEqual(target.launchAtLoginChanges, [true])
+    }
+
+    func testDockIconAndLaunchAtLoginApplyWithoutAVersion() async {
+        defaults.set(true, forKey: ManagedDefaults.menuBarOnlyKey)
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+
+        await launch()
+
+        XCTAssertNil(defaults.object(forKey: ManagedDefaults.versionKey))
+        XCTAssertEqual(target.menuBarOnlyChanges, [true])
+        XCTAssertEqual(target.launchAtLoginChanges, [true])
+    }
+
+    func testFailedLaunchAtLoginIsTriedAgainAtTheNextLaunch() async {
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+        target.launchAtLoginSucceeds = false
+        await launch()
+        XCTAssertEqual(target.launchAtLoginChanges, [true])
+        XCTAssertNil(defaults.object(forKey: ManagedDefaults.appliedLaunchAtLoginKey))
+
+        relaunchTarget()
+        await launch()
+        XCTAssertEqual(target.launchAtLoginChanges, [true])
+        XCTAssertEqual(defaults.object(forKey: ManagedDefaults.appliedLaunchAtLoginKey) as? Bool, true)
+    }
+
+    func testDockIconAndLaunchAtLoginWaitForOnboarding() async {
+        target.canApplySettings = false
+        defaults.set(true, forKey: ManagedDefaults.menuBarOnlyKey)
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+        await launch()
+        XCTAssertEqual(target.menuBarOnlyChanges, [])
+        XCTAssertEqual(target.launchAtLoginChanges, [])
+
+        target.canApplySettings = true
+        await launch()
+        XCTAssertEqual(target.menuBarOnlyChanges, [true])
+        XCTAssertEqual(target.launchAtLoginChanges, [true])
+    }
+
+    func testRuntimeDockIconChangeApplies() async throws {
+        let applier = makeApplier()
+        applier.start()
+        defer { applier.stop() }
+
+        defaults.set(true, forKey: ManagedDefaults.menuBarOnlyKey)
+        for _ in 0..<50 where target.menuBarOnlyChanges.isEmpty {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+
+        XCTAssertEqual(target.menuBarOnlyChanges, [true])
+    }
+
+    func testProfileChangeDuringALaunchAtLoginChangeAppliesWhenItFinishes() async {
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+        target.whileSettingLaunchAtLogin = { [defaults] in
+            defaults?.set(false, forKey: ManagedDefaults.launchAtLoginKey)
+        }
+        let applier = makeApplier()
+
+        applier.apply()
+        await finishLaunchAtLogin(applier)
+
+        XCTAssertEqual(target.launchAtLoginChanges, [true, false])
+        XCTAssertEqual(defaults.object(forKey: ManagedDefaults.appliedLaunchAtLoginKey) as? Bool, false)
+    }
+
+    func testFailedLaunchAtLoginIsTriedOnlyOncePerLaunch() async {
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+        target.launchAtLoginSucceeds = false
+        let applier = makeApplier()
+
+        applier.apply()
+        await finishLaunchAtLogin(applier)
+        applier.apply()
+        await finishLaunchAtLogin(applier)
+        XCTAssertEqual(target.launchAtLoginChanges, [true], "A failed value must not be retried in the same run")
+
+        // A different value from the profile is still applied in the same run.
+        target.launchAtLoginSucceeds = true
+        defaults.set(false, forKey: ManagedDefaults.launchAtLoginKey)
+        applier.apply()
+        await finishLaunchAtLogin(applier)
+        XCTAssertEqual(target.launchAtLoginChanges, [true, false])
+    }
+
+    func testFinishingOnboardingAppliesDockIconAndLaunchAtLogin() async throws {
+        target.canApplySettings = false
+        defaults.set(true, forKey: ManagedDefaults.menuBarOnlyKey)
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+        let applier = makeApplier()
+        applier.start()
+        defer { applier.stop() }
+        await finishLaunchAtLogin(applier)
+        XCTAssertEqual(target.menuBarOnlyChanges, [])
+        XCTAssertEqual(target.launchAtLoginChanges, [])
+
+        target.canApplySettings = true
+        defaults.set(true, forKey: OnboardingSettings.completedV2Key)
+        for _ in 0..<50 where target.launchAtLoginChanges.isEmpty {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        await finishLaunchAtLogin(applier)
+
+        XCTAssertEqual(target.menuBarOnlyChanges, [true])
+        XCTAssertEqual(target.launchAtLoginChanges, [true])
     }
 
     // MARK: - Recording shortcut
@@ -764,7 +985,14 @@ final class LiveManagedDefaultsTargetTests: XCTestCase {
         try? FileManager.default.removeItem(at: modelsDirectory)
     }
 
-    private func makeTarget() -> LiveManagedDefaultsTarget {
+    private final class FakeMenuBarOnlySetting: MenuBarOnlySetting {
+        var changes: [Bool] = []
+        func setMenuBarOnlyKeepingWindows(_ menuBarOnly: Bool) { changes.append(menuBarOnly) }
+    }
+
+    private let menuBar = FakeMenuBarOnlySetting()
+
+    private func makeTarget(launchAtLoginManager: LaunchAtLoginManager? = nil) -> LiveManagedDefaultsTarget {
         let whisper = WhisperModelManager(modelsDirectory: modelsDirectory)
         let fluidAudio = FluidAudioModelManager()
         return LiveManagedDefaultsTarget(
@@ -772,8 +1000,29 @@ final class LiveManagedDefaultsTargetTests: XCTestCase {
                 whisperModelManager: whisper, fluidAudioModelManager: fluidAudio),
             whisperModelManager: whisper,
             fluidAudioModelManager: fluidAudio,
-            aiService: AIService()
+            aiService: AIService(),
+            menuBarManager: menuBar,
+            launchAtLoginManager: launchAtLoginManager
         )
+    }
+
+    func testDockIconGoesThroughTheMenuBarManagerAndKeepsWindows() {
+        let target = makeTarget()
+
+        target.setMenuBarOnly(true)
+        target.setMenuBarOnly(false)
+
+        XCTAssertEqual(menuBar.changes, [true, false])
+    }
+
+    func testLaunchAtLoginGoesThroughTheLaunchAtLoginManager() async {
+        let loginItem = FakeLoginItem(status: .notRegistered)
+        let target = makeTarget(launchAtLoginManager: LaunchAtLoginManager(loginItem: loginItem))
+
+        let succeeded = await target.setLaunchAtLogin(true)
+
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(loginItem.status, .enabled)
     }
 
     func testRecordingShortcutCountsAsChosenWhenSetOrRemoved() throws {
