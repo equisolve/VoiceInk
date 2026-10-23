@@ -8,7 +8,7 @@ Never launch VoiceInk or VoiceInk Dev on the host for these checks, and never ru
 
 ## How it works
 
-- [Tart](https://tart.run) runs the VM with Apple's Virtualization framework. `scripts/vm/vm-up.sh` starts it with `--no-graphics --vnc-experimental`. With `--no-graphics`, tart opens no window and only prints the address of the framework's built-in VNC server, which listens on `127.0.0.1` with a random password.
+- [Tart](https://tart.run) runs the VM with Apple's Virtualization framework. `scripts/vm/vm-up.sh` starts it with `--no-graphics --vnc-experimental`. With `--no-graphics`, tart opens no window and only prints the address of the framework's built-in VNC server, which listens on `127.0.0.1` with a random password. The scripts use that address only while the `tart run` process that `vm-up.sh` started is still running. If the VM was started some other way, stop it with `vm-down.sh` and start it again with `vm-up.sh`.
 - The scripts copy the app in and launch it over SSH.
 - `scripts/vm/vm-vnc.swift` is a small command-line client for that VNC server. It reads the VM's screen into a PNG and sends mouse clicks and keystrokes through the VM's virtual mouse and keyboard. It opens no window. The scripts compile it to `~/.tart/vm-vnc` on first use.
 
@@ -20,8 +20,9 @@ Never launch VoiceInk or VoiceInk Dev on the host for these checks, and never ru
 
    ```sh
    brew install sshpass
-   gh release download -R cirruslabs/tart -p 'tart*' -D ~/scratch/tart-dl
-   cd ~/scratch/tart-dl
+   tart_dl="$(mktemp -d)"
+   gh release download -R cirruslabs/tart -p 'tart*' -D "$tart_dl"
+   cd "$tart_dl"
    shasum -a 256 -c tart_*_checksums.txt --ignore-missing
    tar -xzf tart.tar.gz
    mkdir -p ~/.local/lib
@@ -39,7 +40,7 @@ Never launch VoiceInk or VoiceInk Dev on the host for these checks, and never ru
    tart prune --entries caches --older-than 0
    ```
 
-   The download is about 31 GB compressed. The VM uses about 35 GB in `~/.tart`, which doesn't sync. Pruning the cache removes the downloaded copy; you need it again only to clone another VM.
+   The download is about 31 GB compressed. The VM uses about 35 GB in `~/.tart`. Pruning the cache removes the downloaded copy; you need it again only to clone another VM.
 
 3. Start the VM once to create its SSH key:
 
@@ -70,11 +71,12 @@ Every script prints what it did and exits non-zero on failure. Set `VOICEINK_VM`
 
 ## Build and check the app
 
-1. Build VoiceInk Dev on the host. This is the Debug configuration with the ad hoc signing settings that `make local` uses, so it needs no Apple Developer certificate:
+1. Build VoiceInk Dev on the host. This is the Debug configuration with the ad hoc signing settings that `make local` uses, so it needs no Apple Developer certificate. Set `VOICEINK_BUILD_DIR` to any directory outside the repo; the build output is about 4 GB. Run this from the repo root:
 
    ```sh
+   VOICEINK_BUILD_DIR="${VOICEINK_BUILD_DIR:-$HOME/voiceink-vm-build}"
    xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Debug \
-     -derivedDataPath ~/scratch/voiceink-vm/dd \
+     -derivedDataPath "$VOICEINK_BUILD_DIR" \
      -xcconfig LocalBuild.xcconfig \
      CODE_SIGN_IDENTITY=- CODE_SIGNING_REQUIRED=NO CODE_SIGNING_ALLOWED=YES DEVELOPMENT_TEAM="" \
      CODE_SIGN_ENTITLEMENTS="$PWD/VoiceInk/VoiceInk.local.entitlements" \
@@ -88,7 +90,7 @@ Every script prints what it did and exits non-zero on failure. Set `VOICEINK_VM`
 
    ```sh
    scripts/vm/vm-up.sh
-   scripts/vm/vm-install-app.sh ~/scratch/voiceink-vm/dd/Build/Products/Debug/"VoiceInk Dev.app"
+   scripts/vm/vm-install-app.sh "$VOICEINK_BUILD_DIR/Build/Products/Debug/VoiceInk Dev.app"
    scripts/vm/vm-run.sh
    ```
 
@@ -106,7 +108,7 @@ Every script prints what it did and exits non-zero on failure. Set `VOICEINK_VM`
 
 ## Reach a specific screen
 
-The app isn't sandboxed, so it reads its settings from the `com.prakashjoshipax.VoiceInk.dev` defaults domain in the VM. Write settings over SSH while the app is quit, then launch it.
+The app isn't sandboxed, so it reads its settings from the `com.prakashjoshipax.VoiceInk.dev` defaults domain in the VM. Write settings in the VM over SSH while the app is quit, then launch it. Every `defaults` command in this section runs in the VM, never on the host, where it would change your own copy of the app.
 
 To skip onboarding and open the main window, and to keep the What's New sheet from covering it:
 
@@ -116,7 +118,15 @@ ssh -i ~/.tart/voiceink_ed25519 -o IdentitiesOnly=yes -o IdentityAgent=none admi
 scripts/vm/vm-run.sh
 ```
 
-Replace `dictionary-auto-learn` with the `id` of `ChangeLogItem.latest` in `VoiceInk/App/ChangeLog/ChangeLogManager.swift`. To return to onboarding, delete the domain with `defaults delete com.prakashjoshipax.VoiceInk.dev`.
+Replace `dictionary-auto-learn` with the `id` of `ChangeLogCatalog.latest` in `VoiceInk/App/ChangeLog/ChangeLogManager.swift`.
+
+To return to onboarding, delete the domain in the VM:
+
+```sh
+ssh -i ~/.tart/voiceink_ed25519 -o IdentitiesOnly=yes -o IdentityAgent=none admin@"$(tart ip voiceink)" \
+  'pkill -x "VoiceInk Dev"; defaults delete com.prakashjoshipax.VoiceInk.dev'
+scripts/vm/vm-run.sh
+```
 
 The main window always opens on Dashboard, and the app has no URL scheme or command-line option for choosing a page. To open another page, take a screenshot, find the sidebar item, and click it:
 

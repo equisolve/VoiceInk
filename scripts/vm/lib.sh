@@ -8,6 +8,7 @@ VM_PASSWORD="${VOICEINK_VM_PASSWORD:-admin}"
 VM_APP_NAME="${VOICEINK_VM_APP:-VoiceInk Dev}"
 VM_BUNDLE_ID="${VOICEINK_VM_BUNDLE_ID:-com.prakashjoshipax.VoiceInk.dev}"
 VM_LOG="${HOME}/.tart/${VM_NAME}-run.log"
+VM_PIDFILE="${HOME}/.tart/${VM_NAME}-run.pid"
 
 die() {
   print -u2 -- "error: $*"
@@ -66,12 +67,32 @@ vm_scp_from() {
   scp -q "${SSH_OPTS[@]}" "${VM_USER}@${ip}:$1" "$2"
 }
 
-# Prints the VNC URL that `tart run --vnc-experimental` wrote to the run log.
+# Prints the PID of the `tart run` process that vm-up.sh started, if it is still running.
+# Fails when the PID file is missing, the process has exited, or the PID now belongs to
+# another program, so a log left over from an earlier run is never trusted.
+vm_tart_pid() {
+  local pid args
+  [[ -r "$VM_PIDFILE" ]] || return 1
+  pid="$(<"$VM_PIDFILE")"
+  [[ "$pid" == <-> ]] || return 1
+  args="$(ps -p "$pid" -o args= 2>/dev/null)" || return 1
+  [[ "$args" == *tart*" run ${VM_NAME} "* ]] || return 1
+  print -- "$pid"
+}
+
+# Prints the VNC URL of the running VM. The URL comes from the run log of the `tart run`
+# process that vm-up.sh started, and only while that process is alive and listening on
+# the URL's port.
 vm_vnc_url() {
-  local url
+  local url port
+  vm_tart_pid >/dev/null || return 1
   url="$(grep -o 'vnc://[^ ]*' "$VM_LOG" 2>/dev/null | tail -1)"
   [[ -n "$url" ]] || return 1
-  print -- "${url%...}"
+  url="${url%...}"
+  port="${url##*:}"
+  [[ "$port" == <-> ]] || return 1
+  lsof -nP -iTCP:"$port" -sTCP:LISTEN >/dev/null 2>&1 || return 1
+  print -- "$url"
 }
 
 # Runs the VNC client (scripts/vm/vm-vnc.swift), compiling it first if needed.
@@ -81,7 +102,7 @@ vm_vnc() {
     say "Compiling ${src:t}"
     swiftc -O "$src" -o "$bin" || die "couldn't compile ${src}"
   fi
-  url="$(vm_vnc_url)" || die "no VNC URL in ${VM_LOG}; restart the VM with scripts/vm/vm-down.sh and scripts/vm/vm-up.sh"
+  url="$(vm_vnc_url)" || die "no live VNC server for VM ${VM_NAME}; restart the VM with scripts/vm/vm-down.sh and scripts/vm/vm-up.sh"
   "$bin" "$url" "$@"
 }
 

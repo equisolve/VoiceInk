@@ -27,20 +27,29 @@ final class Connection {
     private let fd: Int32
 
     init(host: String, port: UInt16) throws {
-        var hints = addrinfo(ai_flags: 0, ai_family: AF_INET, ai_socktype: SOCK_STREAM, ai_protocol: 0,
+        var hints = addrinfo(ai_flags: 0, ai_family: AF_UNSPEC, ai_socktype: SOCK_STREAM, ai_protocol: 0,
                              ai_addrlen: 0, ai_canonname: nil, ai_addr: nil, ai_next: nil)
         var result: UnsafeMutablePointer<addrinfo>?
         guard getaddrinfo(host, String(port), &hints, &result) == 0, let info = result else {
             throw VNCError("can't resolve \(host)")
         }
         defer { freeaddrinfo(result) }
-        fd = socket(info.pointee.ai_family, info.pointee.ai_socktype, info.pointee.ai_protocol)
-        guard fd >= 0 else { throw VNCError("socket() failed") }
-        var timeout = timeval(tv_sec: 15, tv_usec: 0)
-        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-        guard connect(fd, info.pointee.ai_addr, info.pointee.ai_addrlen) == 0 else {
-            throw VNCError("can't connect to \(host):\(port)")
+        // Try each address in turn, so "localhost" works whether the server listens on IPv4 or IPv6.
+        var candidate: UnsafeMutablePointer<addrinfo>? = info
+        while let ai = candidate {
+            let s = socket(ai.pointee.ai_family, ai.pointee.ai_socktype, ai.pointee.ai_protocol)
+            if s >= 0 {
+                var timeout = timeval(tv_sec: 15, tv_usec: 0)
+                setsockopt(s, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+                if connect(s, ai.pointee.ai_addr, ai.pointee.ai_addrlen) == 0 {
+                    fd = s
+                    return
+                }
+                close(s)
+            }
+            candidate = ai.pointee.ai_next
         }
+        throw VNCError("can't connect to \(host):\(port)")
     }
 
     deinit { close(fd) }
@@ -98,7 +107,14 @@ final class Session {
     var height = 0
 
     init(url: URL) throws {
-        guard let host = url.host, let port = url.port else { throw VNCError("bad VNC URL: \(url)") }
+        guard let rawHost = url.host, let port = url.port, (1...65535).contains(port) else {
+            throw VNCError("bad VNC URL: \(url)")
+        }
+        // The password travels with weak DES, so only ever talk to tart's server on this Mac.
+        let host = rawHost.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        guard ["127.0.0.1", "::1", "localhost"].contains(host.lowercased()) else {
+            throw VNCError("refusing VNC host \(host); only 127.0.0.1, ::1, or localhost is allowed")
+        }
         conn = try Connection(host: host, port: UInt16(port))
 
         let version = String(decoding: try conn.read(12), as: UTF8.self)
@@ -140,16 +156,17 @@ final class Session {
     }
 
     func screenshot(to path: String) throws {
+        // `seen` marks each pixel some rectangle has drawn, so overlapping rectangles count once.
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        var seen = [Bool](repeating: false, count: width * height)
         var covered = 0
-        var resized = false
         let deadline = Date().addingTimeInterval(20)
         try requestUpdate()
-        while covered < width * height {
+        while true {
             guard Date() < deadline else { throw VNCError("timed out waiting for the framebuffer") }
             let type = try conn.u8()
             switch type {
-            case 0:  // FramebufferUpdate
+            case 0:  // FramebufferUpdate. Read the whole message before deciding anything.
                 _ = try conn.u8()
                 let rects = Int(try conn.u16())
                 for _ in 0..<rects {
@@ -162,27 +179,36 @@ final class Session {
                             let screens = Int(try conn.u8())
                             _ = try conn.read(3 + screens * 16)
                         }
+                        guard w > 0, h > 0 else { throw VNCError("server reported an empty screen size") }
                         width = w
                         height = h
                         pixels = [UInt8](repeating: 0, count: width * height * 4)
+                        seen = [Bool](repeating: false, count: width * height)
                         covered = 0
-                        resized = true
                         continue
                     }
                     guard encoding == 0 else { throw VNCError("unexpected encoding \(encoding)") }
                     let data = try conn.read(w * h * 4)
-                    for row in 0..<h where y + row < height {
+                    // Clamp to the framebuffer; a rectangle partly or wholly outside it draws nothing there.
+                    let cols = max(0, min(w, width - x))
+                    let rows = cols > 0 ? max(0, min(h, height - y)) : 0
+                    for row in 0..<rows {
                         let dst = ((y + row) * width + x) * 4
                         let src = row * w * 4
-                        let count = min(w, width - x) * 4
-                        pixels.replaceSubrange(dst..<(dst + count), with: data[src..<(src + count)])
+                        pixels.replaceSubrange(dst..<(dst + cols * 4), with: data[src..<(src + cols * 4)])
+                        let first = (y + row) * width + x
+                        for i in first..<(first + cols) where !seen[i] {
+                            seen[i] = true
+                            covered += 1
+                        }
                     }
-                    covered += w * h
                 }
-                if resized || covered < width * height {
-                    resized = false
-                    try requestUpdate()
+                if covered == width * height {
+                    try writePNG(pixels: pixels, to: path)
+                    return
                 }
+                // Part of the screen is still missing, or the size changed. Ask for all of it again.
+                try requestUpdate()
             case 1:  // SetColourMapEntries
                 _ = try conn.read(3)
                 _ = try conn.read(Int(try conn.u16()) * 6)
@@ -195,7 +221,6 @@ final class Session {
                 throw VNCError("unexpected server message \(type)")
             }
         }
-        try writePNG(pixels: pixels, to: path)
     }
 
     private func requestUpdate() throws {
@@ -221,6 +246,9 @@ final class Session {
     }
 
     func click(x: Int, y: Int) throws {
+        guard (0..<width).contains(x), (0..<height).contains(y) else {
+            throw VNCError("click \(x) \(y) is outside the \(width)x\(height) screen")
+        }
         try pointer(x: x, y: y, buttons: 0)
         usleep(100_000)
         try pointer(x: x, y: y, buttons: 1)
@@ -247,14 +275,34 @@ let namedKeys: [String: UInt32] = [
     "cmd": 0xffe7, "command": 0xffe7,
 ]
 
+/// Characters that need Shift on a US keyboard, besides the capital letters.
+let shiftedSymbols = Set("~!@#$%^&*()_+{}|:\"<>?".unicodeScalars)
+let shiftKeysym: UInt32 = 0xffe1
+
+/// Returns the keys to press together for one character of `type` text, or throws for a
+/// character a US keyboard can't type with one key press.
+func keysyms(forTyped scalar: Unicode.Scalar) throws -> [UInt32] {
+    switch scalar {
+    case "\n", "\r": return [0xff0d]
+    case "\t": return [0xff09]
+    default: break
+    }
+    guard scalar.value >= 0x20, scalar.value < 0x7f else {
+        throw VNCError("can't type \(scalar.escaped(asASCII: true)); type supports printable ASCII, newline, and tab")
+    }
+    let needsShift = ("A"..."Z").contains(scalar) || shiftedSymbols.contains(scalar)
+    return needsShift ? [shiftKeysym, scalar.value] : [scalar.value]
+}
+
 func keysyms(forCombo combo: String) throws -> [UInt32] {
     try combo.lowercased().split(separator: "+").map { part in
         let name = String(part)
         if let k = namedKeys[name] { return k }
-        if name.unicodeScalars.count == 1, let scalar = name.unicodeScalars.first, scalar.value < 0x100 {
+        if name.unicodeScalars.count == 1, let scalar = name.unicodeScalars.first,
+           scalar.value > 0x20, scalar.value < 0x7f {
             return scalar.value
         }
-        throw VNCError("unknown key: \(name)")
+        throw VNCError("unknown key: \(name); use a printable ASCII character or one of \(namedKeys.keys.sorted().joined(separator: ", "))")
     }
 }
 
@@ -263,22 +311,25 @@ func run() throws {
     guard args.count >= 3, let url = URL(string: args[1]) else {
         throw VNCError("usage: vm-vnc <vnc-url> screenshot <out.png> | click <x> <y> | type <text> | key <combo>")
     }
-    let session = try Session(url: url)
+    // Check the arguments before connecting, so bad input sends nothing to the VM.
     switch (args[2], args.count) {
     case ("size", 3):
+        let session = try Session(url: url)
         print("\(session.width)x\(session.height)")
     case ("screenshot", 4):
-        try session.screenshot(to: args[3])
+        try Session(url: url).screenshot(to: args[3])
     case ("click", 5):
-        guard let x = Int(args[3]), let y = Int(args[4]) else { throw VNCError("click needs integer x and y") }
-        try session.click(x: x, y: y)
-    case ("type", 4):
-        for scalar in args[3].unicodeScalars {
-            let upper = CharacterSet.uppercaseLetters.contains(scalar)
-            try session.press(upper ? [0xffe1, scalar.value] : [scalar.value])
+        guard let x = Int(args[3]), let y = Int(args[4]), x >= 0, y >= 0 else {
+            throw VNCError("click needs non-negative integer x and y")
         }
+        try Session(url: url).click(x: x, y: y)
+    case ("type", 4):
+        let presses = try args[3].unicodeScalars.map(keysyms(forTyped:))
+        let session = try Session(url: url)
+        for keys in presses { try session.press(keys) }
     case ("key", 4):
-        try session.press(try keysyms(forCombo: args[3]))
+        let keys = try keysyms(forCombo: args[3])
+        try Session(url: url).press(keys)
     default:
         throw VNCError("unknown command or wrong number of arguments: \(args.dropFirst(2).joined(separator: " "))")
     }

@@ -7,8 +7,14 @@ require_tools
 
 vm_exists || die "VM ${VM_NAME} doesn't exist; see One-time setup in docs/vm.md"
 
+started=0
 if vm_running; then
-  say "VM ${VM_NAME} is already running"
+  # Use the running VM only if it is the `tart run` that this script started and its VNC
+  # server still answers. Otherwise the URL in the log is from an earlier run.
+  vm_vnc_url >/dev/null ||
+    die "VM ${VM_NAME} is running, but not from a live run of this script, so its VNC address is unknown; stop it with scripts/vm/vm-down.sh, then run this script again"
+  tart_pid="$(vm_tart_pid)"
+  say "VM ${VM_NAME} is already running (tart pid ${tart_pid})"
 else
   say "Starting VM ${VM_NAME} with --no-graphics (log: ${VM_LOG})"
   # --no-graphics keeps tart from opening a VM window on the host. Never drop it.
@@ -16,18 +22,46 @@ else
   # vm-screenshot.sh and vm-input.sh read the screen and send input through that server.
   : >"$VM_LOG"
   chmod 600 "$VM_LOG"
-  tart run "$VM_NAME" --no-graphics --vnc-experimental >>"$VM_LOG" 2>&1 </dev/null &!
+  tart run "$VM_NAME" --no-graphics --vnc-experimental >>"$VM_LOG" 2>&1 </dev/null &
+  tart_pid=$!
+  started=1
+  print -- "$tart_pid" >"$VM_PIDFILE"
+  # Keep tart running after this script exits, whether it succeeds or fails.
+  trap 'disown %% 2>/dev/null || true' EXIT
 fi
+
+# If `tart run` has exited, stops with its exit status and the end of its log.
+check_tart() {
+  kill -0 "$tart_pid" 2>/dev/null && return 0
+  local how="exited" code=0
+  if (( started )); then
+    wait "$tart_pid" || code=$?
+    how="exited with status ${code}"
+  fi
+  rm -f "$VM_PIDFILE"
+  print -u2 -- "error: tart run ${how} before VM ${VM_NAME} was ready. Last lines of ${VM_LOG}:"
+  tail -n 20 "$VM_LOG" >&2
+  exit 1
+}
 
 say "Waiting for the VNC URL"
 for _ in {1..60}; do
+  check_tart
   vm_vnc_url >/dev/null 2>&1 && break
   sleep 1
 done
-vm_vnc_url >/dev/null || die "tart printed no VNC URL; start the VM with this script, not plain tart run (log: ${VM_LOG})"
+check_tart
+vm_vnc_url >/dev/null || die "tart printed no working VNC URL within 60 seconds; see ${VM_LOG}"
 
 say "Waiting for an IP address"
-ip="$(tart ip "$VM_NAME" --wait 180)" || die "VM ${VM_NAME} got no IP address within 180 seconds; see ${VM_LOG}"
+ip=""
+for _ in {1..90}; do
+  check_tart
+  ip="$(vm_ip)" && [[ -n "$ip" ]] && break
+  ip=""
+  sleep 2
+done
+[[ -n "$ip" ]] || die "VM ${VM_NAME} got no IP address within 180 seconds; see ${VM_LOG}"
 say "VM IP: ${ip}"
 
 if [[ ! -f "$VM_KEY" ]]; then
@@ -37,6 +71,7 @@ fi
 
 say "Waiting for SSH"
 for _ in {1..60}; do
+  check_tart
   if vm_ssh true 2>/dev/null; then
     say "SSH is up: ${VM_USER}@${ip}"
     exit 0
