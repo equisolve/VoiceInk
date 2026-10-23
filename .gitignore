@@ -35,6 +35,7 @@ build/
 .local-build/
 .equisolve-build/
 .review-build/
+.test-build/
 .local-dependencies/
 
 # CocoaPods

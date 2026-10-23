@@ -10,10 +10,11 @@ WHISPER_CPP_COMMIT := d1be6fde11ac6e0407606b4e42fe72d34add8037
 # Records which commit the framework was built from, so changing the pin triggers a rebuild.
 WHISPER_BUILD_STAMP := $(WHISPER_CPP_DIR)/build-apple/.voiceink-whisper-commit
 LOCAL_DERIVED_DATA := $(CURDIR)/.local-build
+TEST_DERIVED_DATA ?= $(CURDIR)/.test-build
 LOCAL_CODESIGN_IDENTITY ?=
 RUN_APP_NAME ?= VoiceInk
 
-.PHONY: all clean whisper setup build local check healthcheck help dev run release release-setup \
+.PHONY: all clean whisper setup build test local check healthcheck help dev run release release-setup \
 	equisolve-release equisolve-release-setup
 
 # Default target
@@ -71,6 +72,21 @@ build: setup
 		-skipPackagePluginValidation \
 		-skipMacroValidation \
 		build
+
+# Run the unit tests. The test host starts without windows, a menu bar item, or a Dock icon. Signs ad hoc, so it
+# works on a Mac without the team's development certificate.
+test: setup
+	xcodebuild -project VoiceInk.xcodeproj -scheme VoiceInk -configuration Debug \
+		-derivedDataPath "$(TEST_DERIVED_DATA)" \
+		-xcconfig LocalBuild.xcconfig \
+		CODE_SIGN_IDENTITY=- \
+		DEVELOPMENT_TEAM="" \
+		CODE_SIGN_ENTITLEMENTS="$(CURDIR)/VoiceInk/VoiceInk.local.entitlements" \
+		-onlyUsePackageVersionsFromResolvedFile \
+		-skipPackagePluginValidation \
+		-skipMacroValidation \
+		-only-testing:VoiceInkTests \
+		test
 
 # Build locally with stable Apple Development signing when available.
 local: check setup
@@ -175,6 +191,7 @@ help:
 	@echo "  whisper            Clone and build whisper.cpp XCFramework"
 	@echo "  setup              Copy whisper XCFramework to VoiceInk project"
 	@echo "  build              Build the VoiceInk Xcode project"
+	@echo "  test               Run the unit tests without showing any VoiceInk window"
 	@echo "  local              Build locally with stable signing when available"
 	@echo "    LOCAL_CODESIGN_IDENTITY=<SHA or name> overrides automatic Apple Development detection"
 	@echo "  run                Launch the built VoiceInk app"
