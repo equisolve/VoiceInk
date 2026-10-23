@@ -92,12 +92,15 @@ class WindowManager: NSObject {
         window.maxSize = NSSize(width: AppWindowLayout.width, height: CGFloat.greatestFiniteMagnitude)
         window.setFrameAutosaveName(Self.mainWindowAutosaveName)
         applyInitialPlacementIfNeeded(to: window)
+        // The window is configured again when its content changes, such as when onboarding finishes. Only a new
+        // window is hidden in menu bar mode, so the window the person is using stays open.
+        let isNewWindow = window.identifier != Self.mainWindowIdentifier
         registerMainWindowIfNeeded(window)
 
         if shouldShowNextConfiguredMainWindow {
             shouldShowNextConfiguredMainWindow = false
             presentMainWindow(window)
-        } else if UserDefaults.standard.bool(forKey: "IsMenuBarOnly") {
+        } else if isNewWindow, UserDefaults.standard.bool(forKey: "IsMenuBarOnly") {
             window.orderOut(nil)
         }
     }
