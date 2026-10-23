@@ -3,12 +3,12 @@
 // sends mouse and keyboard input from the host, so nothing runs in the guest and
 // no window opens on the host. The scripts in scripts/vm compile and call it.
 //
-// Usage:
-//   vm-vnc <vnc-url> size                    (prints the framebuffer size in pixels)
-//   vm-vnc <vnc-url> screenshot <out.png>
-//   vm-vnc <vnc-url> click <x> <y>          (framebuffer pixels)
-//   vm-vnc <vnc-url> type <text>
-//   vm-vnc <vnc-url> key <combo>            (for example: return, escape, tab, cmd+q, cmd+comma)
+// Usage, with the VNC URL in the VM_VNC_URL environment variable:
+//   vm-vnc size                    (prints the framebuffer size in pixels)
+//   vm-vnc screenshot <out.png>
+//   vm-vnc click <x> <y>          (framebuffer pixels)
+//   vm-vnc type <text>
+//   vm-vnc key <combo>            (for example: return, escape, tab, cmd+q, cmd+comma)
 //
 // Speaks RFB 3.8 with VNC password authentication and raw encoding only.
 
@@ -345,31 +345,36 @@ func keysyms(forCombo combo: String) throws -> [UInt32] {
 }
 
 func run() throws {
-    let args = CommandLine.arguments
-    guard args.count >= 3, let url = URL(string: args[1]) else {
-        throw VNCError("usage: vm-vnc <vnc-url> screenshot <out.png> | click <x> <y> | type <text> | key <combo>")
+    // The URL holds the VNC password, so it comes from the environment, which other users
+    // can't read, instead of the command line, which they can.
+    guard let rawURL = ProcessInfo.processInfo.environment["VM_VNC_URL"], let url = URL(string: rawURL) else {
+        throw VNCError("set VM_VNC_URL to the VNC URL that tart printed")
+    }
+    let args = Array(CommandLine.arguments.dropFirst())
+    guard !args.isEmpty else {
+        throw VNCError("usage: vm-vnc size | screenshot <out.png> | click <x> <y> | type <text> | key <combo>")
     }
     // Check the arguments before connecting, so bad input sends nothing to the VM.
-    switch (args[2], args.count) {
-    case ("size", 3):
+    switch (args[0], args.count) {
+    case ("size", 1):
         let session = try Session(url: url)
         print("\(session.width)x\(session.height)")
-    case ("screenshot", 4):
-        try Session(url: url).screenshot(to: args[3])
-    case ("click", 5):
-        guard let x = Int(args[3]), let y = Int(args[4]), x >= 0, y >= 0 else {
+    case ("screenshot", 2):
+        try Session(url: url).screenshot(to: args[1])
+    case ("click", 3):
+        guard let x = Int(args[1]), let y = Int(args[2]), x >= 0, y >= 0 else {
             throw VNCError("click needs non-negative integer x and y")
         }
         try Session(url: url).click(x: x, y: y)
-    case ("type", 4):
-        let presses = try args[3].unicodeScalars.map(keysyms(forTyped:))
+    case ("type", 2):
+        let presses = try args[1].unicodeScalars.map(keysyms(forTyped:))
         let session = try Session(url: url)
         for keys in presses { try session.press(keys) }
-    case ("key", 4):
-        let keys = try keysyms(forCombo: args[3])
+    case ("key", 2):
+        let keys = try keysyms(forCombo: args[1])
         try Session(url: url).press(keys)
     default:
-        throw VNCError("unknown command or wrong number of arguments: \(args.dropFirst(2).joined(separator: " "))")
+        throw VNCError("unknown command or wrong number of arguments: \(args.joined(separator: " "))")
     }
 }
 

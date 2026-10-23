@@ -2,7 +2,7 @@
 # Launches the installed app inside the VM's logged-in GUI session and waits for its process.
 # Usage: scripts/vm/vm-run.sh [app name, default "VoiceInk Dev"]
 set -euo pipefail
-# shellcheck source=scripts/vm/lib.sh
+# shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 require_tools
 

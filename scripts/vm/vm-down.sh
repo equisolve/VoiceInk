@@ -2,7 +2,7 @@
 # Stops the VM.
 # Usage: scripts/vm/vm-down.sh
 set -euo pipefail
-# shellcheck source=scripts/vm/lib.sh
+# shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 require_tools
 

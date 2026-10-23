@@ -8,7 +8,7 @@
 # Input goes in through the VM's virtual keyboard and mouse, so the guest needs no
 # Accessibility permission.
 set -euo pipefail
-# shellcheck source=scripts/vm/lib.sh
+# shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 require_tools
 

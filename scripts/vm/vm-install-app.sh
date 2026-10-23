@@ -2,7 +2,7 @@
 # Copies a host-built app bundle into the VM's /Applications, replacing any old copy.
 # Usage: scripts/vm/vm-install-app.sh <path-to-.app>
 set -euo pipefail
-# shellcheck source=scripts/vm/lib.sh
+# shellcheck source=lib.sh
 source "$(dirname "$0")/lib.sh"
 require_tools
 

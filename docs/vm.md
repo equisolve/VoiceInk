@@ -110,10 +110,11 @@ The scripts are Bash and run with the `/bin/bash` that ships with macOS. Every s
 
 The app isn't sandboxed, so it reads its settings from the `com.prakashjoshipax.VoiceInk.dev` defaults domain in the VM. Write settings in the VM over SSH while the app is quit, then launch it. Every `defaults` command in this section runs in the VM, never on the host, where it would change your own copy of the app.
 
-To skip onboarding and open the main window, and to keep the What's New sheet from covering it:
+The commands use the VM named by `VOICEINK_VM`, the same as the scripts. To skip onboarding and open the main window, and to keep the What's New sheet from covering it:
 
 ```sh
-ssh -i ~/.tart/voiceink_ed25519 -o IdentitiesOnly=yes -o IdentityAgent=none admin@"$(tart ip voiceink)" \
+vm="${VOICEINK_VM:-voiceink}"
+ssh -i "$HOME/.tart/${vm}_ed25519" -o IdentitiesOnly=yes -o IdentityAgent=none admin@"$(tart ip "$vm")" \
   'pkill -x "VoiceInk Dev"; defaults write com.prakashjoshipax.VoiceInk.dev hasCompletedOnboardingV2 -bool true; defaults write com.prakashjoshipax.VoiceInk.dev VoiceInkDismissedChangeLogItemIDs -array dictionary-auto-learn'
 scripts/vm/vm-run.sh
 ```
@@ -123,7 +124,8 @@ Replace `dictionary-auto-learn` with the `id` of `ChangeLogCatalog.latest` in `V
 To return to onboarding, delete the domain in the VM:
 
 ```sh
-ssh -i ~/.tart/voiceink_ed25519 -o IdentitiesOnly=yes -o IdentityAgent=none admin@"$(tart ip voiceink)" \
+vm="${VOICEINK_VM:-voiceink}"
+ssh -i "$HOME/.tart/${vm}_ed25519" -o IdentitiesOnly=yes -o IdentityAgent=none admin@"$(tart ip "$vm")" \
   'pkill -x "VoiceInk Dev"; defaults delete com.prakashjoshipax.VoiceInk.dev'
 scripts/vm/vm-run.sh
 ```

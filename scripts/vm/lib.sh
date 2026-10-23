@@ -106,7 +106,9 @@ vm_vnc() {
     swiftc -O "$src" -o "$bin" || die "couldn't compile ${src}"
   fi
   url="$(vm_vnc_url)" || die "no live VNC server for VM ${VM_NAME}; restart the VM with scripts/vm/vm-down.sh and scripts/vm/vm-up.sh"
-  "$bin" "$url" "$@"
+  # Pass the URL, which holds the VNC password, in the environment. Other users can see
+  # a process's arguments but not its environment.
+  VM_VNC_URL="$url" "$bin" "$@"
 }
 
 # Runs a command in the VM's logged-in GUI session (Aqua), as the admin user.
