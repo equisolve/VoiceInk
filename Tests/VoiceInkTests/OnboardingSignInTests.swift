@@ -101,6 +101,27 @@ final class OnboardingSignInTests: XCTestCase {
         XCTAssertNotEqual(coordinator.practiceEnhancementProvider.provider, .managed)
     }
 
+    func testLockedOrganizationProviderPracticesWithTheEndpoint() {
+        setOrganizationEndpoint()
+        defaults.set(true, forKey: EnhancementProviderLock.key)
+        let coordinator = OnboardingCoordinator(defaults: defaults)
+
+        XCTAssertEqual(coordinator.lockedEnhancementProvider?.provider, .managed)
+        XCTAssertTrue(coordinator.practicesWithOrganizationEndpoint)
+        XCTAssertEqual(coordinator.practiceEnhancementProvider.provider, .managed)
+        XCTAssertEqual(coordinator.practiceEnhancementProvider.model, model)
+    }
+
+    func testLockedProviderIsTheProviderThePracticeModesUse() {
+        setOrganizationEndpoint(provider: "Ollama")
+        defaults.set(true, forKey: EnhancementProviderLock.key)
+        let coordinator = OnboardingCoordinator(defaults: defaults)
+
+        XCTAssertEqual(coordinator.lockedEnhancementProvider?.provider, .ollama)
+        XCTAssertFalse(coordinator.practicesWithOrganizationEndpoint)
+        XCTAssertEqual(coordinator.practiceEnhancementProvider.provider, .ollama)
+    }
+
     // MARK: - Waiting for sign-in
 
     func testEnhancementStepWaitsForSignIn() throws {

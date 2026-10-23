@@ -15,7 +15,7 @@ struct ManagedDefaults: Equatable {
 
     static let profileKeys = [
         transcriptionModelKey, enhancementProviderKey, enhancementModelKey,
-        enhancementEnabledKey, autoDownloadModelsKey, shortcutKey, versionKey,
+        enhancementEnabledKey, autoDownloadModelsKey, shortcutKey, versionKey, EnhancementProviderLock.key,
     ]
 
     /// VoiceInk's own record of the last version it applied. Never set by a profile.

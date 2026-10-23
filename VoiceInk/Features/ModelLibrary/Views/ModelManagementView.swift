@@ -174,6 +174,12 @@ struct ModelManagementView: View {
             case .local:
                 localModelsSection
             case .cloud:
+                if let providerLock = EnhancementProviderLock.current {
+                    ManagedByOrganizationCaption(
+                        title: EnhancementProviderLock.noticeTitle,
+                        message: "Your organization sets the AI provider for every mode: \(providerLock.provider.displayName)."
+                    )
+                }
                 if let managedEndpoint = cloudPolicyMonitor.managedEndpoint {
                     ManagedAIProviderCard(endpoint: managedEndpoint)
                 }

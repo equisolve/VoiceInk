@@ -453,8 +453,22 @@ final class OnboardingCoordinator: ObservableObject {
             .managed, cloudAllowed: CloudPolicy.isCloudAllowed(in: defaults), managedEndpoint: endpoint)
     }
 
-    /// The provider and model the practice steps' modes use.
+    /// The provider `LockEnhancementProvider` fixes for every mode, or nil when nothing is locked.
+    var lockedEnhancementProvider: EnhancementProviderLock? {
+        EnhancementProviderLock.resolve(
+            defaults: defaults,
+            isCloudAllowed: CloudPolicy.isCloudAllowed(in: defaults),
+            voiceInkRefineUnavailableReason: VoiceInkRefineService.shared.unavailableDescription,
+            managedEndpoint: ManagedAIEndpoint.current(in: defaults)
+        ).lock
+    }
+
+    /// The provider and model the practice steps' modes use. A locked provider wins, because every mode runs with it.
     var practiceEnhancementProvider: (provider: AIProvider, model: String?) {
+        if let lock = lockedEnhancementProvider {
+            let model = lock.model ?? (lock.provider == .managed ? ManagedAIEndpoint.current(in: defaults)?.model : nil)
+            return (lock.provider, model ?? lock.provider.defaultModel)
+        }
         if practicesWithOrganizationEndpoint, let endpoint = ManagedAIEndpoint.current(in: defaults) {
             return (.managed, endpoint.model)
         }

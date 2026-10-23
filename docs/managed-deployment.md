@@ -19,7 +19,7 @@ When `DisableCloudServices` is `true`:
 - **Cloud transcription.** Every non-local transcription provider is hidden from model pickers and refused before any audio is read or sent. This includes Groq, ElevenLabs, Deepgram, Mistral, Gemini, Soniox, Speechmatics, AssemblyAI, xAI, Cartesia, OpenRouter, custom transcription endpoints, and any cloud provider added in a later release. Only Whisper, Parakeet, transcribe.cpp, and Apple Speech models are available.
 - **Modes that use a cloud transcription model.** VoiceInk uses the default transcription model if it's local and downloaded, otherwise the first downloaded local model. If no local model is downloaded, recording stops with an error that tells the user to choose a local model. Audio is never sent to a cloud service.
 - **Cloud AI enhancement.** Only VoiceInk Refine, Ollama, custom OpenAI-compatible models, and the [organization AI endpoint](#provide-an-organization-ai-endpoint) are available. Ollama and custom models are allowed only when their server URL host is `localhost`, `127.0.0.1`, or `::1`, even when the URL points at the organization AI endpoint. VoiceInk refuses an Ollama server on another computer, including model listing and connection checks. The CLI provider is turned off, because the command it runs can reach cloud services. All other providers are hidden and refused before any text is sent.
-- **Modes that use a blocked AI provider.** VoiceInk uses the organization AI endpoint when one is set up. Otherwise, it pastes the transcript without AI enhancement and shows a short notice with the reason.
+- **Modes that use a blocked AI provider.** VoiceInk uses the organization AI endpoint when one is set up. Otherwise, it pastes the transcript without AI enhancement and shows a short notice with the reason. The mode card in **Modes** and the mode editor both show the provider that runs. When none runs, the card shows "No AI enhancement" and the editor says why. The mode keeps its saved provider, so it comes back if the profile changes.
 - **API key entry.** The **Cloud** tab in **AI Models** shows a notice instead of the provider list, and onboarding skips the cloud provider steps. Keys already saved in the Keychain are ignored, not deleted, so they work again if the key is removed.
 - **Auto-Learn Dictionary.** Auto-Learn requests go through the same check, so they can use only the allowed AI providers.
 - **Model catalog refreshes.** VoiceInk doesn't download the OpenRouter model lists.
@@ -51,7 +51,8 @@ To give users AI enhancement through a service your organization runs, set these
 When `ManagedAIEndpointURL` and `ManagedAIModel` are both set:
 
 - The **Cloud** tab in **AI Models** shows the provider, model, and endpoint as read-only, labeled **Managed by your organization** when the values come from a configuration profile. The token itself isn't shown.
-- The provider is first in the AI provider lists. Setting or changing the endpoint doesn't change which provider users have selected; to select it for them, use `DefaultEnhancementProvider`.
+- The provider is first in the AI provider lists. Setting or changing the endpoint doesn't change which provider users have selected; to select it for them, use `DefaultEnhancementProvider`, and to keep them from changing it, add [`LockEnhancementProvider`](#lock-the-ai-provider).
+- A mode that uses the provider shows no **AI Model** picker, because `ManagedAIModel` sets the model. Its card in **Modes** shows the provider name instead of the model name. Changing `ManagedAIModel` changes the model that requests use, and nothing in the app needs to change.
 - VoiceInk reads the token for each request. It doesn't copy the token to the Keychain, logs, or history. Without a token, VoiceInk sends no `Authorization` header.
 - Changes to these keys apply while the app runs.
 - To make the provider the default for enhancement, set `DefaultEnhancementProvider` to `Managed`, as described in [Set default models](#set-default-models).
@@ -135,7 +136,7 @@ All of these keys are in the `com.equisolve.VoiceInk` domain.
 
 ## Sample configuration profile
 
-This profile sets the keys in the previous table, except `ManagedAIToken`, and the [default models](#set-default-models): Parakeet for transcription and the organization AI endpoint for enhancement, with VoiceInk Refine downloaded as the fallback. Each person signs in with Equisolve to get their own key. Auto-Learn Dictionary stays off. Replace the `ManagedAI` values with your endpoint, model, and sign-in URL. For a setup without sign-in, replace `ManagedAISignInURL` with `ManagedAIToken`. If you don't run an AI endpoint, remove the `ManagedAI` keys and set `DefaultEnhancementProvider` to `VoiceInk Refine`. Upload it to your MDM service as a custom configuration profile, or paste the inner dictionary under `mcx_preference_settings` into a custom settings payload for the `com.equisolve.VoiceInk` domain. Replace the `PayloadUUID` values with your own (run `uuidgen`), and change `PayloadIdentifier` and `PayloadOrganization` to match your organization.
+This profile sets the keys in the previous table, except `ManagedAIToken`, and the [default models](#set-default-models): Parakeet for transcription and the organization AI endpoint for enhancement, locked so people can't choose another provider, with VoiceInk Refine downloaded as the fallback. Each person signs in with Equisolve to get their own key. Auto-Learn Dictionary stays off. Replace the `ManagedAI` values with your endpoint, model, and sign-in URL. For a setup without sign-in, replace `ManagedAISignInURL` with `ManagedAIToken`. If you don't run an AI endpoint, remove the `ManagedAI` keys and set `DefaultEnhancementProvider` to `VoiceInk Refine`. Upload it to your MDM service as a custom configuration profile, or paste the inner dictionary under `mcx_preference_settings` into a custom settings payload for the `com.equisolve.VoiceInk` domain. Replace the `PayloadUUID` values with your own (run `uuidgen`), and change `PayloadIdentifier` and `PayloadOrganization` to match your organization.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -190,6 +191,8 @@ This profile sets the keys in the previous table, except `ManagedAIToken`, and t
                                 <string>parakeet-tdt-0.6b-v3</string>
                                 <key>DefaultEnhancementProvider</key>
                                 <string>Managed</string>
+                                <key>LockEnhancementProvider</key>
+                                <true/>
                                 <key>DefaultEnhancementEnabled</key>
                                 <true/>
                                 <key>AutoDownloadModels</key>
@@ -260,13 +263,31 @@ These keys set starting choices that users can change later. They are separate f
 - **Organization endpoint.** When `DefaultEnhancementProvider` is `Managed`, VoiceInk selects the organization provider if `ManagedAIEndpointURL` and `ManagedAIModel` are set and the endpoint is allowed (with `DisableCloudServices` on, it must use `https` or a loopback host). VoiceInk doesn't check that the endpoint answers. Otherwise it selects VoiceInk Refine if the Mac can run it, writes a log message, and still applies `DefaultEnhancementEnabled`. On a Mac that can't run VoiceInk Refine either, VoiceInk ignores both keys.
 - **No keys.** When none of these keys are set, VoiceInk behaves as it does without a profile.
 
+### Lock the AI provider
+
+`DefaultEnhancementProvider` sets only the starting provider, and `DisableCloudServices` only narrows the list of providers. To keep people from changing the provider, set the Boolean key `LockEnhancementProvider` to `true` next to `DefaultEnhancementProvider`.
+
+| Key | Type | Effect |
+| --- | --- | --- |
+| `LockEnhancementProvider` | Boolean | `true` makes every mode use the provider in `DefaultEnhancementProvider`, and the model in `DefaultEnhancementModel` if it's set. `false` or absent leaves the provider as the person's choice. |
+
+When the key is `true` and `DefaultEnhancementProvider` resolves to a provider this Mac can use:
+
+- **Every mode uses the provider.** This includes modes saved with another provider and the modes the onboarding practice steps set up. Each mode keeps its saved provider, so when you remove the key, modes go back to what they had.
+- **The provider is read-only.** The mode editor shows the provider without a picker, with the note **Your organization sets the AI provider.** The **Cloud** tab in **AI Models** names the provider too. With the organization AI endpoint, the mode editor shows no model either.
+- **AI enhancement stays the person's choice.** The **AI Enhancement** switch in each mode still works, and `DefaultEnhancementEnabled` still sets only its starting value.
+- **No version needed.** VoiceInk applies the lock at launch and whenever the profile changes, without `ManagedDefaultsVersion`.
+- **Fallback.** When `DefaultEnhancementProvider` is `Managed` and the endpoint isn't set up or allowed, VoiceInk locks VoiceInk Refine instead if the Mac can run it, and writes a log message. When neither can be used, or the provider is blocked by `DisableCloudServices`, nothing is locked, and VoiceInk writes a log message.
+
+Without the key, while `DisableCloudServices` is `true`, the mode editor says **Your organization limits which AI providers you can use** and lists the providers that are available.
+
 ### VoiceInk Refine on smaller Macs
 
 VoiceInk Refine needs a Mac with Apple silicon and at least 16 GB of memory, and its download is about 1.1 GB. On an Intel Mac or a Mac with less memory, VoiceInk ignores VoiceInk Refine in `DefaultEnhancementProvider` and `AutoDownloadModels`, so it doesn't download the model or select it. It also ignores `DefaultEnhancementEnabled` set to `true`, so enhancement stays off unless the user turns it on. VoiceInk writes a log message for each ignored key that says why. The transcription default still applies. The same profile can go to every Mac; you don't need a separate profile for smaller Macs.
 
 ### Sample settings
 
-The [sample profile](#sample-configuration-profile) sets these keys. It selects Parakeet for transcription and the organization AI endpoint for enhancement, and downloads VoiceInk Refine as the fallback for when the endpoint isn't set up or allowed. It recommends Right Option as the recording shortcut. To use VoiceInk Refine alone, set `DefaultEnhancementProvider` to `VoiceInk Refine`.
+The [sample profile](#sample-configuration-profile) sets these keys. It selects Parakeet for transcription and the organization AI endpoint for enhancement, and downloads VoiceInk Refine as the fallback for when the endpoint isn't set up or allowed. It recommends Right Option as the recording shortcut. It also sets `LockEnhancementProvider`, so people can't switch to another provider; remove it to let them choose. To use VoiceInk Refine alone, set `DefaultEnhancementProvider` to `VoiceInk Refine`.
 
 The Parakeet model IDs are `parakeet-tdt-0.6b-v2` (English only) and `parakeet-tdt-0.6b-v3` (English and 25 European languages).
 

@@ -62,6 +62,27 @@ struct ModeConfigFormView: View {
         return selectedProvider
     }
 
+    /// The organization's provider lock. The mode's saved provider stays in the draft, so removing the lock restores it.
+    private var providerLock: EnhancementProviderLock? {
+        EnhancementProviderLock.current
+    }
+
+    /// The provider that runs for this mode, worked out the same way as for the mode list and each recording. The
+    /// draft's saved provider stays as is, so it comes back if the organization's settings change.
+    private var enhancementProviderResolution: EnhancementProviderResolution {
+        ModeRuntimeResolver.enhancementProviderResolution(
+            savedProviderName: draft.selectedAIProvider,
+            savedModelName: draft.selectedAIModel,
+            lock: providerLock,
+            connectedProviders: aiProviderOptions
+        )
+    }
+
+    /// The provider this mode uses, or nil when none runs.
+    private var effectiveAIProvider: AIProvider? {
+        enhancementProviderResolution.runningProvider
+    }
+
     var body: some View {
         QuickPanelScaffold {
             formContent
@@ -343,7 +364,8 @@ struct ModeConfigFormView: View {
             Toggle("AI Enhancement", isOn: $draft.isAIEnhancementEnabled)
                 .onChange(of: draft.isAIEnhancementEnabled) { _, newValue in
                     if newValue {
-                        if configuredSelectedAIProvider == nil {
+                        // Keep a saved provider the organization blocks, so it comes back if the policy changes.
+                        if enhancementProviderResolution == .unavailable {
                             draft.selectedAIProvider = aiProviderOptions.first?.rawValue
                             draft.selectedAIModel = nil
                         }
@@ -364,11 +386,20 @@ struct ModeConfigFormView: View {
                     }
                 }
 
-            let providerBinding = Binding<AIProvider>(
+            // The picker shows the provider that runs. A blocked provider with nothing in its place shows no selection.
+            let providerBinding = Binding<AIProvider?>(
                 get: {
-                    configuredSelectedAIProvider ?? aiProviderOptions.first ?? .gemini
+                    switch enhancementProviderResolution {
+                    case .provider(let provider) where aiProviderOptions.contains(provider):
+                        return provider
+                    case .blocked:
+                        return nil
+                    default:
+                        return aiProviderOptions.first
+                    }
                 },
                 set: { newValue in
+                    guard let newValue else { return }
                     draft.selectedAIProvider = newValue.rawValue
                     draft.selectedAIModel = nil
                 }
@@ -377,7 +408,12 @@ struct ModeConfigFormView: View {
             if draft.isAIEnhancementEnabled {
                 let providerOptions = aiProviderOptions
 
-                if providerOptions.isEmpty {
+                if let providerLock {
+                    LabeledContent("AI Provider") {
+                        Text(providerLock.provider.displayName)
+                            .foregroundColor(.secondary)
+                    }
+                } else if providerOptions.isEmpty {
                     LabeledContent("AI Provider") {
                         Text("No providers connected")
                             .foregroundColor(.secondary)
@@ -386,7 +422,7 @@ struct ModeConfigFormView: View {
                 } else {
                     Picker("AI Provider", selection: providerBinding) {
                         ForEach(providerOptions, id: \.self) { provider in
-                            Text(provider.displayName).tag(provider)
+                            Text(provider.displayName).tag(Optional(provider))
                         }
                     }
                     .onChange(of: draft.selectedAIProvider) { _, newValue in
@@ -414,26 +450,59 @@ struct ModeConfigFormView: View {
                     }
                 }
 
-                if !CloudPolicy.isCloudAllowed {
+                if providerLock != nil {
+                    ManagedByOrganizationCaption(
+                        title: EnhancementProviderLock.noticeTitle,
+                        message: "Your organization sets the AI provider."
+                    )
+                } else if !CloudPolicy.isCloudAllowed {
                     if let managedEndpoint = cloudPolicyMonitor.managedEndpoint {
                         ManagedByOrganizationCaption(
                             message:
-                                "Only \(managedEndpoint.providerName), Ollama, VoiceInk Refine, and custom models on this Mac are available."
+                                "Your organization limits which AI providers you can use. Available: \(managedEndpoint.providerName), Ollama, VoiceInk Refine, and custom models on this Mac."
                         )
                     } else {
                         ManagedByOrganizationCaption(
-                            message: "Only Ollama, VoiceInk Refine, and custom models on this Mac are available."
+                            message:
+                                "Your organization limits which AI providers you can use. Available: Ollama, VoiceInk Refine, and custom models on this Mac."
                         )
                     }
                 }
 
-                if let provider = configuredSelectedAIProvider {
-                    aiModelPicker(for: provider)
+                if case .blocked(let blockedProvider) = enhancementProviderResolution {
+                    Text(
+                        "Your organization doesn't allow \(blockedProvider.displayName), so this mode runs no AI enhancement. Choose an available provider."
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                }
+
+                if let provider = effectiveAIProvider {
+                    if let providerLock {
+                        lockedAIModelRow(for: providerLock)
+                    } else if EnhancementModelDisplay.showsModelPicker(for: provider) {
+                        aiModelPicker(for: provider)
+                    }
                     if provider != .voiceInkRefine {
                         promptPicker
                         contextAwarenessRow
                     }
                 }
+            }
+        }
+    }
+
+    /// The model that goes with a locked provider, shown read-only. The organization endpoint shows no model row.
+    @ViewBuilder
+    private func lockedAIModelRow(for lock: EnhancementProviderLock) -> some View {
+        if EnhancementModelDisplay.showsModelPicker(for: lock.provider), lock.provider != .localCLI {
+            let model =
+                EnhancementProviderLock.effectiveModelName(
+                    savedProvider: draft.selectedAIProvider, savedModel: draft.selectedAIModel, lock: lock)
+                ?? warmupSnapshot.selectedModel(for: lock.provider)
+            LabeledContent("AI Model") {
+                Text(model)
+                    .foregroundColor(.secondary)
             }
         }
     }
@@ -603,8 +672,8 @@ struct ModeConfigFormView: View {
     private var canRespond: Bool {
         draft.isAIEnhancementEnabled
             && selectedPrompt != nil
-            && configuredSelectedAIProvider != nil
-            && configuredSelectedAIProvider != .voiceInkRefine
+            && effectiveAIProvider != nil
+            && effectiveAIProvider != .voiceInkRefine
     }
 
     private func applyOutputRules() {

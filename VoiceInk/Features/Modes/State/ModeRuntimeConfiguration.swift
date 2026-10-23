@@ -65,8 +65,86 @@ enum ModeTranscriptionModelResolution {
     case available(mode: ModeConfig, model: any TranscriptionModel)
 }
 
+/// The AI provider that runs for a mode's enhancement. The mode list, the mode editor, and each recording all read
+/// this, so they always agree. The mode's saved provider is never changed.
+enum EnhancementProviderResolution: Equatable {
+    /// This provider runs.
+    case provider(AIProvider)
+    /// The organization blocks the saved provider and offers no provider in its place, so no AI enhancement runs.
+    case blocked(AIProvider)
+    /// The saved provider isn't connected, or the saved name isn't a known provider.
+    case unavailable
+
+    /// The provider that runs, or nil when none does.
+    var runningProvider: AIProvider? {
+        if case .provider(let provider) = self { return provider }
+        return nil
+    }
+
+    /// Works out which provider runs, from the mode's saved provider and the organization's settings.
+    /// - Parameters:
+    ///   - savedProviderName: The mode's saved provider. When nil, the first connected provider runs.
+    ///   - lock: The organization's provider lock. When set, its provider always runs.
+    ///   - isCloudAllowed: False when the organization turns off cloud services.
+    ///   - isAllowed: Whether the organization allows a provider.
+    ///   - connectedProviders: The providers this Mac can use, in display order.
+    static func resolve(
+        savedProviderName: String?,
+        lock: EnhancementProviderLock?,
+        isCloudAllowed: Bool,
+        isAllowed: (AIProvider) -> Bool,
+        connectedProviders: [AIProvider]
+    ) -> EnhancementProviderResolution {
+        if let lock {
+            return .provider(lock.provider)
+        }
+        guard let savedProviderName else {
+            return connectedProviders.first.map { .provider($0) } ?? .unavailable
+        }
+        guard let provider = AIProvider(rawValue: savedProviderName) else {
+            return .unavailable
+        }
+        if !isCloudAllowed, provider.supportsEnhancement {
+            if !isAllowed(provider) {
+                // Use the organization's provider in place of a blocked one.
+                return isAllowed(.managed) ? .provider(.managed) : .blocked(provider)
+            }
+            if provider == .custom {
+                return .provider(provider)
+            }
+        }
+        return connectedProviders.contains(provider) ? .provider(provider) : .unavailable
+    }
+}
+
 @MainActor
 enum ModeRuntimeResolver {
+    /// The provider that runs for a mode, with the organization's settings on this Mac.
+    /// - Parameters:
+    ///   - connectedProviders: The providers this Mac can use. Defaults to `aiService.connectedProviders`.
+    static func enhancementProviderResolution(
+        savedProviderName: String?,
+        savedModelName: String?,
+        lock: EnhancementProviderLock? = EnhancementProviderLock.current,
+        connectedProviders: [AIProvider]
+    ) -> EnhancementProviderResolution {
+        EnhancementProviderResolution.resolve(
+            savedProviderName: savedProviderName,
+            lock: lock,
+            isCloudAllowed: CloudPolicy.isCloudAllowed,
+            isAllowed: { provider in
+                if provider == .custom {
+                    let baseURL = savedModelName.flatMap {
+                        CustomAIProviderManager.shared.requestConfiguration(forModel: $0)?.baseURL
+                    }
+                    return CloudPolicy.isEnhancementProviderAllowed(.custom, customBaseURL: baseURL)
+                }
+                return CloudPolicy.isEnhancementProviderAllowed(provider)
+            },
+            connectedProviders: connectedProviders
+        )
+    }
+
     static func transcriptionModelResolution(
         mode: ModeConfig? = nil,
         transcriptionModelManager: TranscriptionModelManager
@@ -159,9 +237,15 @@ enum ModeRuntimeResolver {
         aiService: AIService
     ) -> EnhancementRuntimeConfiguration {
         let mode = mode ?? ModeManager.shared.currentEffectiveConfiguration
+        // With the organization's provider lock, every mode uses the locked provider. The mode's saved provider is
+        // left as is.
+        let lock = EnhancementProviderLock.current
+        let configuredModelName = EnhancementProviderLock.effectiveModelName(
+            savedProvider: mode?.selectedAIProvider, savedModel: mode?.selectedAIModel, lock: lock)
         let provider = resolvedProvider(
             providerName: mode?.selectedAIProvider,
-            configuredModelName: mode?.selectedAIModel,
+            configuredModelName: configuredModelName,
+            lock: lock,
             aiService: aiService
         )
         let prompt =
@@ -173,7 +257,7 @@ enum ModeRuntimeResolver {
             )
         let modelName = resolvedEnhancementModelName(
             provider: provider,
-            configuredModelName: mode?.selectedAIModel,
+            configuredModelName: configuredModelName,
             aiService: aiService
         )
 
@@ -216,36 +300,24 @@ enum ModeRuntimeResolver {
     static func resolvedProvider(
         providerName: String?,
         configuredModelName: String? = nil,
+        lock: EnhancementProviderLock? = nil,
         aiService: AIService
     ) -> AIProvider? {
-        if let providerName {
-            guard let provider = AIProvider(rawValue: providerName) else {
-                return nil
-            }
-            if !CloudPolicy.isCloudAllowed, provider.supportsEnhancement {
-                let isBlocked: Bool
-                if provider == .custom {
-                    let baseURL = configuredModelName.flatMap {
-                        CustomAIProviderManager.shared.requestConfiguration(forModel: $0)?.baseURL
-                    }
-                    isBlocked = !CloudPolicy.isEnhancementProviderAllowed(.custom, customBaseURL: baseURL)
-                } else {
-                    isBlocked = !CloudPolicy.isEnhancementProviderAllowed(provider)
-                }
-
-                // Use the organization's provider in place of a blocked one. Without it, keep the blocked provider
-                // so the request path refuses it and tells the user, rather than skipping enhancement without a word.
-                if isBlocked {
-                    return CloudPolicy.isEnhancementProviderAllowed(.managed) ? .managed : provider
-                }
-                if provider == .custom {
-                    return provider
-                }
-            }
-            return aiService.connectedProviders.contains(provider) ? provider : nil
+        switch enhancementProviderResolution(
+            savedProviderName: providerName,
+            savedModelName: configuredModelName,
+            lock: lock,
+            connectedProviders: aiService.connectedProviders
+        ) {
+        case .provider(let provider):
+            return provider
+        case .blocked(let provider):
+            // Keep the blocked provider so the request path refuses it and tells the user, rather than skipping
+            // enhancement without a word.
+            return provider
+        case .unavailable:
+            return nil
         }
-
-        return aiService.connectedProviders.first
     }
 
     private static func resolvedEnhancementModelName(

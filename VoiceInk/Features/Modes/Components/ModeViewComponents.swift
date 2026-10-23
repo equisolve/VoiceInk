@@ -140,6 +140,7 @@ struct ConfigurationRow: View {
     let onEditConfig: (ModeConfig) -> Void
     @EnvironmentObject var enhancementService: AIEnhancementService
     @EnvironmentObject var transcriptionModelManager: TranscriptionModelManager
+    @EnvironmentObject var aiService: AIService
     @State private var isHovering = false
     @State private var isShowingDeleteConfirmation = false
     @State private var deletionCandidate: ModeConfig?
@@ -151,6 +152,25 @@ struct ConfigurationRow: View {
             let uuid = UUID(uuidString: promptId)
         else { return nil }
         return enhancementService.allPrompts.first { $0.id == uuid }
+    }
+
+    private var providerLock: EnhancementProviderLock? {
+        EnhancementProviderLock.current
+    }
+
+    /// The provider that runs for this mode, which is the one the chips show.
+    private var enhancementProviderResolution: EnhancementProviderResolution {
+        ModeRuntimeResolver.enhancementProviderResolution(
+            savedProviderName: config.selectedAIProvider,
+            savedModelName: config.selectedAIModel,
+            lock: providerLock,
+            connectedProviders: aiService.connectedProviders
+        )
+    }
+
+    private var isEnhancementBlocked: Bool {
+        if case .blocked = enhancementProviderResolution { return true }
+        return false
     }
 
     private var transcriptionModelMetadata: TranscriptionModelMetadata {
@@ -382,9 +402,11 @@ struct ConfigurationRow: View {
                 }
 
                 if config.isAIEnhancementEnabled,
-                    config.selectedAIProvider != AIProvider.localCLI.rawValue,
-                    let modelName = config.selectedAIModel,
-                    !modelName.isEmpty
+                    let modelName = EnhancementModelDisplay.chipLabel(
+                        resolution: enhancementProviderResolution,
+                        savedProviderName: config.selectedAIProvider,
+                        savedModelName: config.selectedAIModel,
+                        lock: providerLock)
                 {
                     HStack(spacing: 4) {
                         Image(systemName: "cpu")
@@ -441,12 +463,12 @@ struct ConfigurationRow: View {
                             .stroke(AppTheme.Border.control, lineWidth: 0.5)
                     )
                 }
-                if config.isAIEnhancementEnabled {
+                if config.isAIEnhancementEnabled, !isEnhancementBlocked {
                     HStack(spacing: 4) {
                         Image(systemName: "sparkles")
                             .font(.system(size: 10))
                         Text(
-                            config.selectedAIProvider == AIProvider.voiceInkRefine.rawValue
+                            enhancementProviderResolution.runningProvider == .voiceInkRefine
                                 ? VoiceInkRefineService.providerName
                                 : selectedPrompt?.title ?? "AI"
                         )
