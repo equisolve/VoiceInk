@@ -125,6 +125,8 @@ struct OnboardingView: View {
                         isInIntroPhase: coordinator.isShowingExperienceIntroPhase,
                         shortcutAction: coordinator.experienceShortcutAction,
                         hasShortcut: coordinator.hasExperienceModeShortcut,
+                        isRecommendedShortcut: coordinator.isUsingRecommendedShortcut,
+                        showsShortcutUsageHint: coordinator.showsShortcutUsageHint,
                         text: coordinator.currentExperienceText,
                         isLastStep: coordinator.isLastExperienceStep,
                         isReady: coordinator.isCurrentExperienceReady(

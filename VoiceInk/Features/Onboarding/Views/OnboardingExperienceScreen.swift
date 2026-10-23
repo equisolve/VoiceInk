@@ -6,6 +6,8 @@ struct OnboardingExperienceScreen: View {
     let isInIntroPhase: Bool
     let shortcutAction: ShortcutAction
     let hasShortcut: Bool
+    var isRecommendedShortcut = false
+    var showsShortcutUsageHint = false
     @Binding var text: String
     let isLastStep: Bool
     let isReady: Bool
@@ -46,6 +48,8 @@ struct OnboardingExperienceScreen: View {
                 step: step,
                 shortcutAction: shortcutAction,
                 hasShortcut: hasShortcut,
+                isRecommendedShortcut: isRecommendedShortcut,
+                showsUsageHint: showsShortcutUsageHint,
                 onShortcutChanged: onShortcutChanged
             )
             .id(step.id)

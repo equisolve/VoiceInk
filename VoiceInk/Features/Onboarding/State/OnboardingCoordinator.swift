@@ -203,6 +203,35 @@ final class OnboardingCoordinator: ObservableObject {
         experienceStep.shortcutAction(modeTemplate: experienceModeTemplate)
     }
 
+    /// The recording shortcut the organization recommends with `DefaultShortcut`, or nil.
+    var recommendedShortcut: Shortcut? {
+        ManagedDefaults(defaults: defaults).shortcut.flatMap(ManagedDefaultsResolution.shortcut(named:))
+    }
+
+    /// The shortcut the step starts with when its intro opens: the organization's recommendation for the recording
+    /// shortcut, or none, so the person picks one.
+    var experienceIntroShortcut: Shortcut? {
+        experienceShortcutAction == .primaryRecording ? recommendedShortcut : nil
+    }
+
+    /// True when the step's shortcut is the one the organization recommends.
+    var isUsingRecommendedShortcut: Bool {
+        guard let recommended = experienceIntroShortcut else { return false }
+        return ShortcutStore.shortcut(for: experienceShortcutAction) == recommended
+    }
+
+    /// True on the step where the person picks the recording shortcut while it uses Hybrid, the default mode, which
+    /// both records while the key is held and starts and stops with single presses.
+    var showsShortcutUsageHint: Bool {
+        experienceStep.shouldClearShortcutOnIntro
+            && experienceShortcutAction == .primaryRecording
+            && primaryRecordingShortcutMode() == .hybrid
+    }
+
+    var primaryRecordingShortcutMode: () -> RecordingShortcutManager.Mode = {
+        ShortcutMigration.savedShortcutMode(for: .primaryRecording)
+    }
+
     var shouldSkipCurrentExperienceIntro: Bool {
         experienceStep.shouldSkipShortcutIntro(
             hasConfiguredShortcut: ShortcutStore.shortcut(for: experienceShortcutAction) != nil

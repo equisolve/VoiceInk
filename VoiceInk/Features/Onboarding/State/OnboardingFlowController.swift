@@ -548,7 +548,16 @@ final class OnboardingFlowController {
         var clearedActions = coordinator.clearedExperienceShortcutActions
         clearedActions.insert(coordinator.experienceShortcutAction)
         coordinator.clearedExperienceShortcutActions = clearedActions
-        ShortcutStore.setShortcut(nil, for: coordinator.experienceShortcutAction)
+
+        // Start from the organization's recommended shortcut when it has one and it's free to use.
+        let action = coordinator.experienceShortcutAction
+        if let recommended = coordinator.experienceIntroShortcut,
+            ShortcutValidator.validationError(for: recommended, action: action) == nil
+        {
+            ShortcutStore.setShortcut(recommended, for: action)
+        } else {
+            ShortcutStore.setShortcut(nil, for: action)
+        }
     }
 
     func activateExperienceModeForDemo() {

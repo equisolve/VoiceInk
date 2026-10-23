@@ -194,6 +194,8 @@ This profile sets the keys in the previous table, except `ManagedAIToken`, and t
                                     <string>parakeet-tdt-0.6b-v3</string>
                                     <string>VoiceInk Refine V1</string>
                                 </array>
+                                <key>DefaultShortcut</key>
+                                <string>rightOption</string>
                                 <key>ManagedDefaultsVersion</key>
                                 <integer>1</integer>
                             </dict>
@@ -240,6 +242,7 @@ These keys set starting choices that users can change later. They are separate f
 | `DefaultEnhancementModel` | String | Optional. The model to select for that provider. VoiceInk ignores this key for VoiceInk Refine, which has one model, and for the organization endpoint, which uses `ManagedAIModel`. |
 | `DefaultEnhancementEnabled` | Boolean | `true` turns on AI enhancement, and `false` turns it off. |
 | `AutoDownloadModels` | Array of strings | Local models to download in the background. Use transcription model IDs, and `VoiceInk Refine V1` for VoiceInk Refine. |
+| `DefaultShortcut` | String | The recording shortcut, as a single key: `rightOption`, `leftOption`, `rightCommand`, `rightControl`, `leftControl`, `rightShift`, or `fn`. Onboarding selects it and labels it **Recommended by your organization**, and the user can pick another. |
 | `ManagedDefaultsVersion` | Integer | Required to apply the choices. VoiceInk applies the choices once for each version. |
 
 ### How VoiceInk applies the defaults
@@ -250,6 +253,7 @@ These keys set starting choices that users can change later. They are separate f
 - **Waiting for a download.** If the default transcription model hasn't been downloaded yet, VoiceInk keeps the current model and switches when the download finishes. It doesn't switch if the user chose another model in the meantime.
 - **Onboarding.** When `DefaultTranscriptionModel`, `DefaultEnhancementProvider`, `DefaultEnhancementEnabled`, or `AutoDownloadModels` is set, onboarding skips entering an API key. It skips choosing a model too when the default transcription model, or another local model, is already downloaded. Otherwise it waits on the model step and continues to the practice steps when the download finishes. That step shows the default transcription model and its download progress, for any local model type; the user can start the download there if `AutoDownloadModels` doesn't list it. When the profile sets no local transcription model, the step offers Parakeet V3 instead. The permission and microphone steps stay, and the progress indicator counts only the steps shown. When `DefaultEnhancementProvider` is `Managed` and the organization endpoint is allowed, the enhancement and email practice steps use the organization endpoint, and ask the person to sign in first when [sign-in](#let-each-person-sign-in) is set up. Otherwise they show only when the Mac already has an API key for a cloud provider.
 - **Cloud services.** When `DisableCloudServices` is `true`, VoiceInk ignores a cloud model or cloud provider in these keys and writes a log message. Local choices still apply. If `DefaultEnhancementEnabled` is `true` and the provider is ignored, VoiceInk leaves enhancement as it was. VoiceInk still records the version as applied, so the ignored choices don't apply later on their own. If you remove `DisableCloudServices` and want them applied, raise `ManagedDefaultsVersion` too.
+- **Shortcut.** VoiceInk sets `DefaultShortcut` as the recording shortcut only when the user has no recording shortcut, including after a version bump, so it never replaces one the user chose or removed. The user can always change it. On the onboarding step where the user picks a shortcut, VoiceInk starts with this one unless another action already uses it. VoiceInk ignores any other value and writes a log message. `DefaultShortcut` alone doesn't make onboarding skip entering an API key.
 - **Organization endpoint.** When `DefaultEnhancementProvider` is `Managed`, VoiceInk selects the organization provider if `ManagedAIEndpointURL` and `ManagedAIModel` are set and the endpoint is allowed (with `DisableCloudServices` on, it must use `https` or a loopback host). VoiceInk doesn't check that the endpoint answers. Otherwise it selects VoiceInk Refine if the Mac can run it, writes a log message, and still applies `DefaultEnhancementEnabled`. On a Mac that can't run VoiceInk Refine either, VoiceInk ignores both keys.
 - **No keys.** When none of these keys are set, VoiceInk behaves as it does without a profile.
 
@@ -259,7 +263,7 @@ VoiceInk Refine needs a Mac with Apple silicon and at least 16 GB of memory, and
 
 ### Sample settings
 
-The [sample profile](#sample-configuration-profile) sets these keys. It selects Parakeet for transcription and the organization AI endpoint for enhancement, and downloads VoiceInk Refine as the fallback for when the endpoint isn't set up or allowed. To use VoiceInk Refine alone, set `DefaultEnhancementProvider` to `VoiceInk Refine`.
+The [sample profile](#sample-configuration-profile) sets these keys. It selects Parakeet for transcription and the organization AI endpoint for enhancement, and downloads VoiceInk Refine as the fallback for when the endpoint isn't set up or allowed. It recommends Right Option as the recording shortcut. To use VoiceInk Refine alone, set `DefaultEnhancementProvider` to `VoiceInk Refine`.
 
 The Parakeet model IDs are `parakeet-tdt-0.6b-v2` (English only) and `parakeet-tdt-0.6b-v3` (English and 25 European languages).
 

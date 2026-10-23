@@ -4,24 +4,42 @@ struct OnboardingExperienceIntroCard: View {
     let step: OnboardingExperienceStep
     let shortcutAction: ShortcutAction
     let hasShortcut: Bool
+    var isRecommendedShortcut = false
+    var showsUsageHint = false
     let onShortcutChanged: () -> Void
 
     @State private var isVisible = false
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
-            VStack(alignment: .leading, spacing: 4) {
-                Text(LocalizedStringKey(introText))
-                    .font(.system(size: 17, weight: .semibold))
-                    .foregroundColor(AppTheme.Text.primary)
-                    .fixedSize(horizontal: false, vertical: true)
+        VStack(spacing: 10) {
+            HStack(alignment: .center, spacing: 14) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(LocalizedStringKey(introText))
+                        .font(.system(size: 17, weight: .semibold))
+                        .foregroundColor(AppTheme.Text.primary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                if showsShortcutControl {
+                    OnboardingShortcutSetupView(
+                        action: shortcutAction,
+                        onShortcutChanged: onShortcutChanged
+                    )
+                }
             }
 
-            if showsShortcutControl {
-                OnboardingShortcutSetupView(
-                    action: shortcutAction,
-                    onShortcutChanged: onShortcutChanged
-                )
+            if showsShortcutControl, isRecommendedShortcut {
+                Label("Recommended by your organization", systemImage: "building.2.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(AppTheme.Text.secondary)
+            }
+
+            if showsShortcutControl, showsUsageHint, hasShortcut {
+                Text("Hold the shortcut while you talk and let go to stop, or press it once to start and once more to stop.")
+                    .font(.system(size: 13))
+                    .foregroundColor(AppTheme.Text.secondary)
+                    .multilineTextAlignment(.center)
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
         .padding(.horizontal, 12)
