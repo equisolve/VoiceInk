@@ -163,22 +163,111 @@ final class EnhancementProviderLockTests: XCTestCase {
         XCTAssertNotEqual(unmanaged.provider, .managed)
     }
 
-    func testEffectiveModelKeepsTheSavedModelOnlyForTheLockedProvider() {
-        let ollamaLock = EnhancementProviderLock(provider: .ollama, model: nil)
+    private func runningModel(
+        _ provider: AIProvider, saved: String?, model: String?, lock: EnhancementProviderLock?
+    ) -> String? {
+        EnhancementProviderLock.runningModelName(
+            provider: provider, savedProvider: saved, savedModel: model, lock: lock,
+            selectedModel: { "selected-\($0.rawValue)" })
+    }
+
+    func testRunningModelPrefersTheLockedModelThenTheSavedModelThenTheSelectedModel() {
+        let lockWithModel = EnhancementProviderLock(provider: .groq, model: "openai/gpt-oss-120b")
+        let lockWithoutModel = EnhancementProviderLock(provider: .groq, model: nil)
 
         XCTAssertEqual(
-            EnhancementProviderLock.effectiveModelName(savedProvider: "Ollama", savedModel: "llama3", lock: ollamaLock),
-            "llama3")
-        XCTAssertNil(
-            EnhancementProviderLock.effectiveModelName(savedProvider: "Gemini", savedModel: "gemini-3.8-flash", lock: ollamaLock))
+            runningModel(.groq, saved: "Groq", model: "qwen/qwen3.8-27b", lock: lockWithModel), "openai/gpt-oss-120b",
+            "The organization's model wins over the saved one")
+        XCTAssertEqual(runningModel(.groq, saved: "Groq", model: "qwen/qwen3.8-27b", lock: lockWithoutModel), "qwen/qwen3.8-27b")
         XCTAssertEqual(
-            EnhancementProviderLock.effectiveModelName(
-                savedProvider: "Gemini", savedModel: "gemini-3.8-flash",
-                lock: EnhancementProviderLock(provider: .managed, model: "voiceink-cleanup")),
-            "voiceink-cleanup")
+            runningModel(.groq, saved: "Ollama", model: "mistral", lock: lockWithoutModel), "selected-Groq",
+            "Another provider's saved model never goes to the locked provider")
+        XCTAssertEqual(runningModel(.groq, saved: "Groq", model: "  ", lock: lockWithoutModel), "selected-Groq")
+        XCTAssertEqual(runningModel(.ollama, saved: "Ollama", model: "mistral", lock: nil), "mistral")
         XCTAssertEqual(
-            EnhancementProviderLock.effectiveModelName(savedProvider: "Gemini", savedModel: "gemini-3.8-flash", lock: nil),
-            "gemini-3.8-flash")
+            runningModel(.managed, saved: "Groq", model: "qwen/qwen3.8-27b", lock: nil), "selected-Managed",
+            "A provider swapped in for a blocked one runs its own selected model")
+    }
+
+    /// With the lock on a provider that sets no model, and a mode saved with another provider, the recording and the
+    /// mode card both use the model selected for the locked provider in AI Models.
+    func testLockedProviderWithoutAModelRunsAndShowsTheSelectedModel() throws {
+        preferences.set(true, forKey: EnhancementProviderLock.key)
+        preferences.set("Groq", forKey: ManagedDefaults.enhancementProviderKey)
+        preferences.set("openai/gpt-oss-20b", forKey: "GroqSelectedModel")
+        let mode = savedModes[1]
+        let aiService = AIService(defaultModeStore: FakeDefaultModeStore())
+        let lock = try XCTUnwrap(EnhancementProviderLock.current)
+        XCTAssertEqual(lock, EnhancementProviderLock(provider: .groq, model: nil))
+
+        let configuration = try enhancementConfiguration(for: mode)
+        XCTAssertEqual(configuration.provider, .groq)
+        XCTAssertEqual(configuration.modelName, "openai/gpt-oss-20b", "Not the first Groq model")
+
+        let chip = EnhancementModelDisplay.chipLabel(
+            resolution: ModeRuntimeResolver.enhancementProviderResolution(
+                savedProviderName: mode.selectedAIProvider, savedModelName: mode.selectedAIModel, lock: lock,
+                connectedProviders: aiService.connectedProviders),
+            savedProviderName: mode.selectedAIProvider, savedModelName: mode.selectedAIModel, lock: lock,
+            selectedModel: { aiService.selectedModel(for: $0) })
+        XCTAssertEqual(chip, configuration.modelName)
+        XCTAssertEqual(mode.selectedAIModel, "mistral", "The saved model is kept")
+    }
+
+    func testLockedProviderKeepsTheModelSavedWithIt() throws {
+        preferences.set(true, forKey: EnhancementProviderLock.key)
+        preferences.set("Groq", forKey: ManagedDefaults.enhancementProviderKey)
+        preferences.set("openai/gpt-oss-20b", forKey: "GroqSelectedModel")
+        let mode = ModeConfig(
+            name: "Groq", isAIEnhancementEnabled: true, selectedAIProvider: "Groq", selectedAIModel: "openai/gpt-oss-120b")
+        let lock = EnhancementProviderLock(provider: .groq, model: nil)
+
+        XCTAssertEqual(try enhancementConfiguration(for: mode).modelName, "openai/gpt-oss-120b")
+        XCTAssertEqual(
+            EnhancementModelDisplay.chipLabel(
+                resolution: .provider(.groq), savedProviderName: "Groq", savedModelName: "openai/gpt-oss-120b", lock: lock,
+                selectedModel: { _ in "openai/gpt-oss-20b" }),
+            "openai/gpt-oss-120b")
+    }
+
+    // MARK: - Applying the lock to the global provider
+
+    func testApplyingTheLockSelectsTheProviderAndTheOrganizationsModel() throws {
+        let suiteName = "EnhancementProviderLockTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        defaults.set("Ollama", forKey: "selectedAIProvider")
+        defaults.set("qwen/qwen3.8-27b", forKey: "GroqSelectedModel")
+        let aiService = AIService(userDefaults: defaults, defaultModeStore: FakeDefaultModeStore())
+
+        LiveManagedDefaultsTarget.applyEnhancementLock(EnhancementProviderLock(provider: .groq, model: nil), to: aiService)
+        XCTAssertEqual(aiService.selectedProvider, .groq)
+        XCTAssertEqual(defaults.string(forKey: "selectedAIProvider"), "Groq")
+        XCTAssertEqual(aiService.selectedModel(for: .groq), "qwen/qwen3.8-27b", "No organization model keeps the selection")
+
+        LiveManagedDefaultsTarget.applyEnhancementLock(
+            EnhancementProviderLock(provider: .groq, model: "openai/gpt-oss-20b"), to: aiService)
+        XCTAssertEqual(aiService.selectedModel(for: .groq), "openai/gpt-oss-20b")
+        XCTAssertEqual(defaults.string(forKey: "GroqSelectedModel"), "openai/gpt-oss-20b")
+    }
+
+    // MARK: - The editor notice
+
+    func testLockNoticeWinsOverTheCloudLimitNotice() {
+        let lock = EnhancementProviderLock(provider: .managed, model: "voiceink-cleanup")
+
+        XCTAssertEqual(
+            EnhancementModelDisplay.providerNotice(lock: lock, isCloudAllowed: false, organizationProviderName: "Organization AI"),
+            .locked)
+        XCTAssertEqual(
+            EnhancementModelDisplay.providerNotice(lock: lock, isCloudAllowed: true, organizationProviderName: nil), .locked)
+        XCTAssertEqual(
+            EnhancementModelDisplay.providerNotice(lock: nil, isCloudAllowed: false, organizationProviderName: "Organization AI"),
+            .limited(organizationProviderName: "Organization AI"))
+        XCTAssertEqual(
+            EnhancementModelDisplay.providerNotice(lock: nil, isCloudAllowed: false, organizationProviderName: nil),
+            .limited(organizationProviderName: nil))
+        XCTAssertNil(EnhancementModelDisplay.providerNotice(lock: nil, isCloudAllowed: true, organizationProviderName: nil))
     }
 
     // MARK: - Model rows and chips
@@ -260,20 +349,42 @@ final class EnhancementProviderLockTests: XCTestCase {
         XCTAssertEqual(resolution(saved: nil, connected: []), .unavailable)
     }
 
+    private func chip(
+        _ resolution: EnhancementProviderResolution, saved: String?, model: String?,
+        lock: EnhancementProviderLock? = nil
+    ) -> String? {
+        EnhancementModelDisplay.chipLabel(
+            resolution: resolution, savedProviderName: saved, savedModelName: model, lock: lock,
+            selectedModel: { "selected-\($0.rawValue)" })
+    }
+
     func testChipShowsTheProviderThatRuns() {
+        XCTAssertEqual(chip(.provider(.managed), saved: "Groq", model: "qwen/qwen3.8-27b"), "Organization AI")
+        XCTAssertEqual(chip(.blocked(.groq), saved: "Groq", model: "qwen/qwen3.8-27b"), "No AI enhancement")
+        XCTAssertEqual(chip(.provider(.ollama), saved: "Ollama", model: "mistral"), "mistral")
         XCTAssertEqual(
-            EnhancementModelDisplay.chipLabel(
-                resolution: .provider(.managed), savedProviderName: "Groq", savedModelName: "qwen/qwen3.8-27b",
-                lock: nil),
-            "Organization AI")
-        XCTAssertEqual(
-            EnhancementModelDisplay.chipLabel(
-                resolution: .blocked(.groq), savedProviderName: "Groq", savedModelName: "qwen/qwen3.8-27b", lock: nil),
-            "No AI enhancement")
-        XCTAssertEqual(
-            EnhancementModelDisplay.chipLabel(
-                resolution: .provider(.ollama), savedProviderName: "Ollama", savedModelName: "mistral", lock: nil),
-            "mistral")
+            chip(.provider(.groq), saved: "Ollama", model: "mistral", lock: EnhancementProviderLock(provider: .groq, model: nil)),
+            "selected-Groq", "A locked provider shows its selected model, not the saved provider's model")
+    }
+
+    func testChipShowsNoEnhancementWhenTheSavedProviderIsUnavailable() {
+        XCTAssertEqual(chip(.unavailable, saved: "Managed", model: "voiceink-cleanup"), "No AI enhancement")
+        XCTAssertEqual(chip(.unavailable, saved: "Groq", model: "qwen/qwen3.8-27b"), "No AI enhancement")
+    }
+
+    /// A mode saved with the organization provider, with cloud services allowed and the endpoint removed, runs no
+    /// enhancement, and the card says so.
+    func testRemovedEndpointShowsNoEnhancementLikeTheRecording() throws {
+        let mode = ModeConfig(
+            name: "Dictation", isAIEnhancementEnabled: true, selectedAIProvider: "Managed", selectedAIModel: "voiceink-cleanup")
+        let aiService = AIService(defaultModeStore: FakeDefaultModeStore())
+
+        let listed = ModeRuntimeResolver.enhancementProviderResolution(
+            savedProviderName: mode.selectedAIProvider, savedModelName: mode.selectedAIModel, lock: nil,
+            connectedProviders: aiService.connectedProviders)
+        XCTAssertEqual(listed, .unavailable)
+        XCTAssertNil(try enhancementConfiguration(for: mode).provider)
+        XCTAssertEqual(chip(listed, saved: mode.selectedAIProvider, model: mode.selectedAIModel), "No AI enhancement")
     }
 
     /// The mode list and the recording path read the same function, so they name the same provider.

@@ -375,24 +375,24 @@ struct ModeConfigFormView: View {
                         {
                             draft.selectedAIModel = warmupSnapshot.selectedModel(for: provider)
                         }
-                        if configuredSelectedAIProvider != .voiceInkRefine,
+                        if effectiveAIProvider != .voiceInkRefine,
                             draft.selectedPromptId == nil
                         {
                             draft.selectedPromptId = warmupSnapshot.firstPromptId
                         }
-                        if configuredSelectedAIProvider == .ollama {
+                        if effectiveAIProvider == .ollama {
                             aiService.refreshOllamaAvailabilityInBackground()
                         }
                     }
                 }
 
-            // The picker shows the provider that runs. A blocked provider with nothing in its place shows no selection.
+            // The picker shows the provider that runs. When none runs, it shows no selection.
             let providerBinding = Binding<AIProvider?>(
                 get: {
                     switch enhancementProviderResolution {
                     case .provider(let provider) where aiProviderOptions.contains(provider):
                         return provider
-                    case .blocked:
+                    case .blocked, .unavailable:
                         return nil
                     default:
                         return aiProviderOptions.first
@@ -450,28 +450,41 @@ struct ModeConfigFormView: View {
                     }
                 }
 
-                if providerLock != nil {
+                switch EnhancementModelDisplay.providerNotice(
+                    lock: providerLock, isCloudAllowed: CloudPolicy.isCloudAllowed,
+                    organizationProviderName: cloudPolicyMonitor.managedEndpoint?.providerName)
+                {
+                case .locked:
                     ManagedByOrganizationCaption(
                         title: EnhancementProviderLock.noticeTitle,
                         message: "Your organization sets the AI provider."
                     )
-                } else if !CloudPolicy.isCloudAllowed {
-                    if let managedEndpoint = cloudPolicyMonitor.managedEndpoint {
-                        ManagedByOrganizationCaption(
-                            message:
-                                "Your organization limits which AI providers you can use. Available: \(managedEndpoint.providerName), Ollama, VoiceInk Refine, and custom models on this Mac."
-                        )
-                    } else {
-                        ManagedByOrganizationCaption(
-                            message:
-                                "Your organization limits which AI providers you can use. Available: Ollama, VoiceInk Refine, and custom models on this Mac."
-                        )
-                    }
+                case .limited(let organizationProviderName?):
+                    ManagedByOrganizationCaption(
+                        message:
+                            "Your organization limits which AI providers you can use. Available: \(organizationProviderName), Ollama, VoiceInk Refine, and custom models on this Mac."
+                    )
+                case .limited(nil):
+                    ManagedByOrganizationCaption(
+                        message:
+                            "Your organization limits which AI providers you can use. Available: Ollama, VoiceInk Refine, and custom models on this Mac."
+                    )
+                case nil:
+                    EmptyView()
                 }
 
                 if case .blocked(let blockedProvider) = enhancementProviderResolution {
                     Text(
                         "Your organization doesn't allow \(blockedProvider.displayName), so this mode runs no AI enhancement. Choose an available provider."
+                    )
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                } else if enhancementProviderResolution == .unavailable, !providerOptions.isEmpty,
+                    let savedProviderName = draft.selectedAIProvider
+                {
+                    let providerName = AIProvider(rawValue: savedProviderName)?.displayName ?? savedProviderName
+                    Text(
+                        "\(providerName) isn't available on this Mac, so this mode runs no AI enhancement. Choose an available provider."
                     )
                     .font(.caption)
                     .foregroundColor(.secondary)
@@ -496,12 +509,11 @@ struct ModeConfigFormView: View {
     @ViewBuilder
     private func lockedAIModelRow(for lock: EnhancementProviderLock) -> some View {
         if EnhancementModelDisplay.showsModelPicker(for: lock.provider), lock.provider != .localCLI {
-            let model =
-                EnhancementProviderLock.effectiveModelName(
-                    savedProvider: draft.selectedAIProvider, savedModel: draft.selectedAIModel, lock: lock)
-                ?? warmupSnapshot.selectedModel(for: lock.provider)
+            let model = EnhancementProviderLock.runningModelName(
+                provider: lock.provider, savedProvider: draft.selectedAIProvider, savedModel: draft.selectedAIModel,
+                lock: lock, selectedModel: { warmupSnapshot.selectedModel(for: $0) })
             LabeledContent("AI Model") {
-                Text(model)
+                Text(model ?? "")
                     .foregroundColor(.secondary)
             }
         }
@@ -681,8 +693,12 @@ struct ModeConfigFormView: View {
     }
 
     private func applyVoiceInkRefineRulesIfNeeded() {
-        guard configuredSelectedAIProvider == .voiceInkRefine else { return }
-        applyVoiceInkRefineRules()
+        guard effectiveAIProvider == .voiceInkRefine else { return }
+        // A lock to VoiceInk Refine leaves the model saved for another provider alone.
+        if configuredSelectedAIProvider == .voiceInkRefine {
+            draft.selectedAIModel = VoiceInkRefineService.modelName
+        }
+        applyOutputRules()
     }
 
     private func applyVoiceInkRefineRules() {

@@ -328,6 +328,11 @@ final class LiveManagedDefaultsTarget: ManagedDefaultsTarget {
     }
 
     func applyEnhancementLock(_ lock: EnhancementProviderLock) {
+        Self.applyEnhancementLock(lock, to: aiService)
+    }
+
+    /// Selects the locked provider, and the organization's model if it sets one, as the global AI enhancement choice.
+    static func applyEnhancementLock(_ lock: EnhancementProviderLock, to aiService: AIService) {
         if aiService.selectedProvider != lock.provider {
             aiService.selectedProvider = lock.provider
         }

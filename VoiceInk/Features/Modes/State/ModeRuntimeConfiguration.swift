@@ -240,14 +240,17 @@ enum ModeRuntimeResolver {
         // With the organization's provider lock, every mode uses the locked provider. The mode's saved provider is
         // left as is.
         let lock = EnhancementProviderLock.current
-        let configuredModelName = EnhancementProviderLock.effectiveModelName(
-            savedProvider: mode?.selectedAIProvider, savedModel: mode?.selectedAIModel, lock: lock)
         let provider = resolvedProvider(
             providerName: mode?.selectedAIProvider,
-            configuredModelName: configuredModelName,
+            configuredModelName: mode?.selectedAIModel,
             lock: lock,
             aiService: aiService
         )
+        let configuredModelName = provider.flatMap { provider in
+            EnhancementProviderLock.runningModelName(
+                provider: provider, savedProvider: mode?.selectedAIProvider, savedModel: mode?.selectedAIModel,
+                lock: lock, selectedModel: { aiService.selectedModel(for: $0) })
+        }
         let prompt =
             provider == .voiceInkRefine
             ? nil

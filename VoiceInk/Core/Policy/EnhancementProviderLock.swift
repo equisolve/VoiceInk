@@ -57,14 +57,28 @@ struct EnhancementProviderLock: Equatable {
         AppPreferences.defaults.objectIsForced(forKey: key) ? "Managed by your organization" : "Set in preferences"
     }
 
-    /// The model a mode uses with the locked provider. The organization's model wins; otherwise the mode's saved
-    /// model is kept when the mode already uses the locked provider.
-    static func effectiveModelName(
-        savedProvider: String?, savedModel: String?, lock: EnhancementProviderLock?
+    /// The model a mode runs with `provider`, the provider that runs for it. The mode list, the mode editor, and each
+    /// recording all read this.
+    ///
+    /// The organization's locked model wins. Otherwise the mode's saved model is used when the mode saved this
+    /// provider. Otherwise, as when the lock or a blocked provider swaps in another provider, the model selected for
+    /// that provider in **AI Models** is used.
+    static func runningModelName(
+        provider: AIProvider,
+        savedProvider: String?,
+        savedModel: String?,
+        lock: EnhancementProviderLock?,
+        selectedModel: (AIProvider) -> String?
     ) -> String? {
-        guard let lock else { return savedModel }
-        if let model = lock.model { return model }
-        return savedProvider == lock.provider.rawValue ? savedModel : nil
+        if let lock, lock.provider == provider, let model = lock.model {
+            return model
+        }
+        if savedProvider == provider.rawValue,
+            let savedModel = savedModel?.trimmingCharacters(in: .whitespacesAndNewlines), !savedModel.isEmpty
+        {
+            return savedModel
+        }
+        return selectedModel(provider)
     }
 }
 
@@ -85,24 +99,40 @@ enum EnhancementModelDisplay {
         return modelName
     }
 
-    /// The text of the AI model chip on a mode card for the provider that runs, or nil for no chip.
+    /// The organization notice under the AI provider in the mode editor.
+    enum ProviderNotice: Equatable {
+        /// The organization sets the provider with `LockEnhancementProvider`.
+        case locked
+        /// Cloud services are off, so only some providers are allowed. The name is the organization endpoint's
+        /// provider, or nil when no endpoint is set.
+        case limited(organizationProviderName: String?)
+    }
+
+    /// Which notice the mode editor shows under the AI provider, or nil for none. The lock notice wins.
+    static func providerNotice(
+        lock: EnhancementProviderLock?, isCloudAllowed: Bool, organizationProviderName: String?
+    ) -> ProviderNotice? {
+        if lock != nil { return .locked }
+        if !isCloudAllowed { return .limited(organizationProviderName: organizationProviderName) }
+        return nil
+    }
+
+    /// The text of the AI model chip on a mode card for the provider and model that run, or nil for no chip.
+    /// - Parameter selectedModel: The model selected for a provider in **AI Models**.
     static func chipLabel(
         resolution: EnhancementProviderResolution,
         savedProviderName: String?,
         savedModelName: String?,
-        lock: EnhancementProviderLock?
+        lock: EnhancementProviderLock?,
+        selectedModel: (AIProvider) -> String?
     ) -> String? {
-        switch resolution {
-        case .provider(let provider):
-            // The saved model goes with the saved provider only; another provider runs its own model.
-            let modelName = EnhancementProviderLock.effectiveModelName(
-                savedProvider: savedProviderName, savedModel: savedModelName, lock: lock)
-            let isSavedProvider = lock != nil || savedProviderName == nil || savedProviderName == provider.rawValue
-            return chipLabel(providerName: provider.rawValue, modelName: isSavedProvider ? modelName : nil)
-        case .blocked:
+        guard let provider = resolution.runningProvider else {
+            // A blocked or unavailable provider means the recording runs no AI enhancement.
             return String(localized: "No AI enhancement")
-        case .unavailable:
-            return chipLabel(providerName: savedProviderName, modelName: savedModelName)
         }
+        let modelName = EnhancementProviderLock.runningModelName(
+            provider: provider, savedProvider: savedProviderName, savedModel: savedModelName, lock: lock,
+            selectedModel: selectedModel)
+        return chipLabel(providerName: provider.rawValue, modelName: modelName)
     }
 }

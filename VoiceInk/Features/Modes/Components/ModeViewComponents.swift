@@ -168,9 +168,9 @@ struct ConfigurationRow: View {
         )
     }
 
+    /// True when no provider runs, because the saved one is blocked or unavailable.
     private var isEnhancementBlocked: Bool {
-        if case .blocked = enhancementProviderResolution { return true }
-        return false
+        enhancementProviderResolution.runningProvider == nil
     }
 
     private var transcriptionModelMetadata: TranscriptionModelMetadata {
@@ -406,7 +406,8 @@ struct ConfigurationRow: View {
                         resolution: enhancementProviderResolution,
                         savedProviderName: config.selectedAIProvider,
                         savedModelName: config.selectedAIModel,
-                        lock: providerLock)
+                        lock: providerLock,
+                        selectedModel: { aiService.selectedModel(for: $0) })
                 {
                     HStack(spacing: 4) {
                         Image(systemName: "cpu")
