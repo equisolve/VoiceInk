@@ -1,0 +1,3 @@
+# The scripts here source lib.sh from their own directory. Let ShellCheck follow it.
+external-sources=true
+source-path=SCRIPTDIR
