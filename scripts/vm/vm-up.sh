@@ -1,8 +1,9 @@
-#!/bin/zsh
+#!/bin/bash
 # Starts the VM with no window on the host, if it isn't already running, and waits for SSH.
 # Usage: scripts/vm/vm-up.sh
 set -euo pipefail
-source "${0:A:h}/lib.sh"
+# shellcheck source=scripts/vm/lib.sh
+source "$(dirname "$0")/lib.sh"
 require_tools
 
 vm_exists || die "VM ${VM_NAME} doesn't exist; see One-time setup in docs/vm.md"
@@ -22,12 +23,11 @@ else
   # vm-screenshot.sh and vm-input.sh read the screen and send input through that server.
   : >"$VM_LOG"
   chmod 600 "$VM_LOG"
+  # A non-interactive bash doesn't stop background jobs when it exits, so tart keeps running.
   tart run "$VM_NAME" --no-graphics --vnc-experimental >>"$VM_LOG" 2>&1 </dev/null &
   tart_pid=$!
   started=1
-  print -- "$tart_pid" >"$VM_PIDFILE"
-  # Keep tart running after this script exits, whether it succeeds or fails.
-  trap 'disown %% 2>/dev/null || true' EXIT
+  printf '%s\n' "$tart_pid" >"$VM_PIDFILE"
 fi
 
 # If `tart run` has exited, stops with its exit status and the end of its log.
@@ -39,7 +39,7 @@ check_tart() {
     how="exited with status ${code}"
   fi
   rm -f "$VM_PIDFILE"
-  print -u2 -- "error: tart run ${how} before VM ${VM_NAME} was ready. Last lines of ${VM_LOG}:"
+  printf 'error: tart run %s before VM %s was ready. Last lines of %s:\n' "$how" "$VM_NAME" "$VM_LOG" >&2
   tail -n 20 "$VM_LOG" >&2
   exit 1
 }
@@ -69,6 +69,13 @@ if [[ ! -f "$VM_KEY" ]]; then
   ssh-keygen -q -t ed25519 -N '' -C "${VM_NAME}-vm" -f "$VM_KEY" || die "ssh-keygen failed"
 fi
 
+# Reads a public key on stdin and adds it to authorized_keys once. It runs in the VM, so
+# its variables expand there.
+# shellcheck disable=SC2016
+install_key='k=$(cat); mkdir -p ~/.ssh && chmod 700 ~/.ssh &&
+  { grep -qxF "$k" ~/.ssh/authorized_keys 2>/dev/null || echo "$k" >> ~/.ssh/authorized_keys; } &&
+  chmod 600 ~/.ssh/authorized_keys'
+
 say "Waiting for SSH"
 for _ in {1..60}; do
   check_tart
@@ -77,10 +84,8 @@ for _ in {1..60}; do
     exit 0
   fi
   # Key login fails until the key is in the VM. Install it with the password once SSH answers.
-  if vm_ssh_password 'k=$(cat); mkdir -p ~/.ssh && chmod 700 ~/.ssh &&
-      { grep -qxF "$k" ~/.ssh/authorized_keys 2>/dev/null || echo "$k" >> ~/.ssh/authorized_keys; } &&
-      chmod 600 ~/.ssh/authorized_keys' <"${VM_KEY}.pub" 2>/dev/null; then
-    say "Checked that ${VM_KEY:t}.pub is in the VM's authorized_keys"
+  if vm_ssh_password "$install_key" <"${VM_KEY}.pub" 2>/dev/null; then
+    say "Checked that $(basename "$VM_KEY").pub is in the VM's authorized_keys"
   fi
   sleep 2
 done

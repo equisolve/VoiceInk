@@ -1,8 +1,9 @@
-#!/bin/zsh
+#!/bin/bash
 # Stops the VM.
 # Usage: scripts/vm/vm-down.sh
 set -euo pipefail
-source "${0:A:h}/lib.sh"
+# shellcheck source=scripts/vm/lib.sh
+source "$(dirname "$0")/lib.sh"
 require_tools
 
 if ! vm_running; then

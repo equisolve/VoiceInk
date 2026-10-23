@@ -1,4 +1,4 @@
-#!/bin/zsh
+#!/bin/bash
 # Saves a PNG of the VM's screen on the host.
 # Usage: scripts/vm/vm-screenshot.sh <out.png>
 #
@@ -6,15 +6,18 @@
 # `screencapture` inside the VM can't work here: it needs the Screen Recording
 # permission, and granting that without clicking needs System Integrity Protection off.
 set -euo pipefail
-source "${0:A:h}/lib.sh"
+# shellcheck source=scripts/vm/lib.sh
+source "$(dirname "$0")/lib.sh"
 require_tools
 
 (( $# == 1 )) || die "usage: $0 <out.png>"
-out="${1:A}"
-[[ -d "${out:h}" ]] || die "directory doesn't exist: ${out:h}"
+dir="$(dirname "$1")"
+[[ -d "$dir" ]] || die "directory doesn't exist: ${dir}"
+out="$(abs_path "$dir")/$(basename "$1")"
 
 say "Capturing the screen of VM ${VM_NAME}"
 rm -f "$out"
 vm_vnc screenshot "$out" || die "screen capture failed"
 [[ -s "$out" ]] || die "screenshot is empty: ${out}"
-say "Saved ${out} ($(sips -g pixelWidth -g pixelHeight "$out" | awk '/pixel/ {printf "%s ", $2}')px)"
+size="$(sips -g pixelWidth -g pixelHeight "$out" | awk '/pixel/ {printf "%s ", $2}')"
+say "Saved ${out} (${size% }px)"

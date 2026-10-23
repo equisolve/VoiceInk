@@ -101,6 +101,44 @@ func vncAuthResponse(challenge: [UInt8], password: String) throws -> [UInt8] {
     return out
 }
 
+/// The screen as it arrives in rectangles. `seen` marks each pixel some rectangle has drawn,
+/// so overlapping rectangles count once and the frame is complete only when every pixel is in.
+struct Framebuffer {
+    let width: Int
+    let height: Int
+    private(set) var pixels: [UInt8]
+    private var seen: [Bool]
+    private var covered = 0
+
+    init(width: Int, height: Int) {
+        self.width = width
+        self.height = height
+        pixels = [UInt8](repeating: 0, count: width * height * 4)
+        seen = [Bool](repeating: false, count: width * height)
+    }
+
+    var isComplete: Bool { covered == width * height }
+
+    /// Copies a raw rectangle in. A rectangle partly or wholly outside the screen draws nothing there.
+    mutating func draw(x: Int, y: Int, w: Int, h: Int, data: [UInt8]) {
+        let cols = max(0, min(w, width - x))
+        let rows = cols > 0 ? max(0, min(h, height - y)) : 0
+        for row in 0..<rows {
+            let first = (y + row) * width + x
+            let src = row * w * 4
+            pixels.replaceSubrange(first * 4..<(first + cols) * 4, with: data[src..<(src + cols * 4)])
+            markSeen(first..<(first + cols))
+        }
+    }
+
+    private mutating func markSeen(_ range: Range<Int>) {
+        for i in range where !seen[i] {
+            seen[i] = true
+            covered += 1
+        }
+    }
+}
+
 final class Session {
     let conn: Connection
     var width = 0
@@ -156,70 +194,70 @@ final class Session {
     }
 
     func screenshot(to path: String) throws {
-        // `seen` marks each pixel some rectangle has drawn, so overlapping rectangles count once.
-        var pixels = [UInt8](repeating: 0, count: width * height * 4)
-        var seen = [Bool](repeating: false, count: width * height)
-        var covered = 0
+        var frame = Framebuffer(width: width, height: height)
         let deadline = Date().addingTimeInterval(20)
         try requestUpdate()
         while true {
             guard Date() < deadline else { throw VNCError("timed out waiting for the framebuffer") }
             let type = try conn.u8()
-            switch type {
-            case 0:  // FramebufferUpdate. Read the whole message before deciding anything.
-                _ = try conn.u8()
-                let rects = Int(try conn.u16())
-                for _ in 0..<rects {
-                    let x = Int(try conn.u16()), y = Int(try conn.u16())
-                    let w = Int(try conn.u16()), h = Int(try conn.u16())
-                    let encoding = Int32(bitPattern: try conn.u32())
-                    if encoding == -223 || encoding == -308 {
-                        // The screen size changed. Start over at the new size.
-                        if encoding == -308 {
-                            let screens = Int(try conn.u8())
-                            _ = try conn.read(3 + screens * 16)
-                        }
-                        guard w > 0, h > 0 else { throw VNCError("server reported an empty screen size") }
-                        width = w
-                        height = h
-                        pixels = [UInt8](repeating: 0, count: width * height * 4)
-                        seen = [Bool](repeating: false, count: width * height)
-                        covered = 0
-                        continue
-                    }
-                    guard encoding == 0 else { throw VNCError("unexpected encoding \(encoding)") }
-                    let data = try conn.read(w * h * 4)
-                    // Clamp to the framebuffer; a rectangle partly or wholly outside it draws nothing there.
-                    let cols = max(0, min(w, width - x))
-                    let rows = cols > 0 ? max(0, min(h, height - y)) : 0
-                    for row in 0..<rows {
-                        let dst = ((y + row) * width + x) * 4
-                        let src = row * w * 4
-                        pixels.replaceSubrange(dst..<(dst + cols * 4), with: data[src..<(src + cols * 4)])
-                        let first = (y + row) * width + x
-                        for i in first..<(first + cols) where !seen[i] {
-                            seen[i] = true
-                            covered += 1
-                        }
-                    }
-                }
-                if covered == width * height {
-                    try writePNG(pixels: pixels, to: path)
-                    return
-                }
-                // Part of the screen is still missing, or the size changed. Ask for all of it again.
-                try requestUpdate()
-            case 1:  // SetColourMapEntries
-                _ = try conn.read(3)
-                _ = try conn.read(Int(try conn.u16()) * 6)
-            case 2:  // Bell
-                break
-            case 3:  // ServerCutText
-                _ = try conn.read(3)
-                _ = try conn.read(Int(try conn.u32()))
-            default:
-                throw VNCError("unexpected server message \(type)")
+            guard type == 0 else {
+                try skipServerMessage(type)
+                continue
             }
+            try readUpdate(into: &frame)
+            if frame.isComplete {
+                try writePNG(pixels: frame.pixels, to: path)
+                return
+            }
+            // Part of the screen is still missing, or the size changed. Ask for all of it again.
+            try requestUpdate()
+        }
+    }
+
+    /// Reads one whole FramebufferUpdate message before anything decides whether the frame is done.
+    private func readUpdate(into frame: inout Framebuffer) throws {
+        _ = try conn.u8()
+        let rects = Int(try conn.u16())
+        for _ in 0..<rects {
+            try readRect(into: &frame)
+        }
+    }
+
+    private func readRect(into frame: inout Framebuffer) throws {
+        let x = Int(try conn.u16()), y = Int(try conn.u16())
+        let w = Int(try conn.u16()), h = Int(try conn.u16())
+        let encoding = Int32(bitPattern: try conn.u32())
+        switch encoding {
+        case 0:
+            frame.draw(x: x, y: y, w: w, h: h, data: try conn.read(w * h * 4))
+        case -223, -308:
+            // The screen size changed. Start over at the new size.
+            if encoding == -308 {
+                let screens = Int(try conn.u8())
+                _ = try conn.read(3 + screens * 16)
+            }
+            guard w > 0, h > 0 else { throw VNCError("server reported an empty screen size") }
+            width = w
+            height = h
+            frame = Framebuffer(width: w, height: h)
+        default:
+            throw VNCError("unexpected encoding \(encoding)")
+        }
+    }
+
+    /// Reads and discards a server message other than FramebufferUpdate.
+    private func skipServerMessage(_ type: UInt8) throws {
+        switch type {
+        case 1:  // SetColourMapEntries
+            _ = try conn.read(3)
+            _ = try conn.read(Int(try conn.u16()) * 6)
+        case 2:  // Bell
+            break
+        case 3:  // ServerCutText
+            _ = try conn.read(3)
+            _ = try conn.read(Int(try conn.u32()))
+        default:
+            throw VNCError("unexpected server message \(type)")
         }
     }
 

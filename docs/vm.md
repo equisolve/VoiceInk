@@ -54,7 +54,7 @@ Tart is free for personal workstations. See [Tart licensing](https://tart.run/li
 
 ## Scripts
 
-Every script prints what it did and exits non-zero on failure. Set `VOICEINK_VM` to use a VM with a name other than `voiceink`.
+The scripts are Bash and run with the `/bin/bash` that ships with macOS. Every script prints what it did and exits non-zero on failure. Set `VOICEINK_VM` to use a VM with a name other than `voiceink`.
 
 | Script | What it does |
 | --- | --- |
