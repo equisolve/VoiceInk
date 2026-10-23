@@ -15,6 +15,10 @@ private final class FakeManagedDefaultsTarget: ManagedDefaultsTarget {
     var selectedModels: [String] = []
     var enhancements: [(provider: AIProvider?, model: String?, enabled: Bool?)] = []
     var startedDownloads: [ManagedModelDownload] = []
+    var hasChosenRecordingShortcut = false
+    var recordingShortcuts: [Shortcut] = []
+
+    func setRecordingShortcut(_ shortcut: Shortcut) { recordingShortcuts.append(shortcut) }
 
     func isDownloaded(_ download: ManagedModelDownload) -> Bool { downloaded.contains(download) }
     func isDownloading(_ download: ManagedModelDownload) -> Bool { downloading.contains(download) }
@@ -190,6 +194,70 @@ final class ManagedDefaultsTests: XCTestCase {
         XCTAssertEqual(target.enhancements.count, 0)
         XCTAssertEqual(target.startedDownloads, [])
         XCTAssertNil(defaults.object(forKey: ManagedDefaults.appliedVersionKey))
+        XCTAssertEqual(target.recordingShortcuts, [])
+    }
+
+    // MARK: - Recording shortcut
+
+    private var rightOption: Shortcut { ManagedDefaultsResolution.shortcut(named: "rightOption")! }
+
+    func testShortcutNameResolvesToItsKey() {
+        XCTAssertEqual(rightOption.kind, .modifierOnly)
+        XCTAssertEqual(rightOption.keyCode, 61, "Right Option")
+        XCTAssertEqual(rightOption.modifierFlags, [.option])
+        XCTAssertEqual(ManagedDefaultsResolution.shortcut(named: "RightOption"), rightOption)
+        for name in ShortcutMigration.presetShortcutNames {
+            XCTAssertNotNil(ManagedDefaultsResolution.shortcut(named: name), name)
+        }
+    }
+
+    func testUnknownShortcutIsIgnoredWithAMessage() {
+        defaults.set("capsLock", forKey: ManagedDefaults.shortcutKey)
+        defaults.set(1, forKey: ManagedDefaults.versionKey)
+
+        let resolution = ManagedDefaultsResolution(
+            ManagedDefaults(defaults: defaults), transcriptionModels: target.transcriptionModels, isCloudAllowed: true,
+            voiceInkRefineUnavailableReason: nil, managedEndpoint: nil)
+        XCTAssertNil(resolution.shortcut)
+        XCTAssertTrue(resolution.ignored.contains { $0.contains("DefaultShortcut capsLock is not a shortcut name") })
+
+        makeApplier().apply()
+        XCTAssertEqual(target.recordingShortcuts, [])
+    }
+
+    func testShortcutAppliesWhenThePersonHasNotChosenOne() {
+        defaults.set("rightOption", forKey: ManagedDefaults.shortcutKey)
+        defaults.set(1, forKey: ManagedDefaults.versionKey)
+
+        makeApplier().apply()
+        makeApplier().apply()
+
+        XCTAssertEqual(target.recordingShortcuts, [rightOption], "The same version must not be applied twice")
+    }
+
+    func testPersonsOwnShortcutIsKeptEvenAfterAVersionBump() {
+        target.hasChosenRecordingShortcut = true
+        defaults.set("rightOption", forKey: ManagedDefaults.shortcutKey)
+        defaults.set(1, forKey: ManagedDefaults.versionKey)
+        makeApplier().apply()
+
+        defaults.set(2, forKey: ManagedDefaults.versionKey)
+        makeApplier().apply()
+
+        XCTAssertEqual(target.recordingShortcuts, [])
+        XCTAssertEqual(defaults.integer(forKey: ManagedDefaults.appliedVersionKey), 2)
+    }
+
+    func testShortcutWaitsForAVersion() {
+        defaults.set("rightOption", forKey: ManagedDefaults.shortcutKey)
+        makeApplier().apply()
+        XCTAssertEqual(target.recordingShortcuts, [])
+    }
+
+    func testShortcutAloneIsNotManagedSetup() {
+        defaults.set("rightOption", forKey: ManagedDefaults.shortcutKey)
+        XCTAssertFalse(ManagedDefaults(defaults: defaults).isPresent)
+        XCTAssertFalse(OnboardingCoordinator(defaults: defaults).isManagedSetup)
     }
 
     // MARK: - Cloud block
@@ -654,6 +722,33 @@ final class LiveManagedDefaultsTargetTests: XCTestCase {
             fluidAudioModelManager: fluidAudio,
             aiService: AIService()
         )
+    }
+
+    func testRecordingShortcutCountsAsChosenWhenSetOrRemoved() throws {
+        // ShortcutStore keeps the shortcut in the app's own settings. Write the stored values directly, so no
+        // shortcut change is announced to the running app, and put the previous values back.
+        let standard = UserDefaults.standard
+        let key = ShortcutAction.primaryRecording.userDefaultsKey
+        let clearedKey = key + "_cleared"
+        let savedShortcut = standard.object(forKey: key)
+        let savedCleared = standard.object(forKey: clearedKey)
+        defer {
+            standard.set(savedShortcut, forKey: key)
+            standard.set(savedCleared, forKey: clearedKey)
+        }
+        let target = makeTarget()
+
+        standard.removeObject(forKey: key)
+        standard.removeObject(forKey: clearedKey)
+        XCTAssertFalse(target.hasChosenRecordingShortcut)
+
+        let shortcut = try XCTUnwrap(ShortcutMigration.presetShortcut(named: "rightCommand"))
+        standard.set(try JSONEncoder().encode(shortcut), forKey: key)
+        XCTAssertTrue(target.hasChosenRecordingShortcut)
+
+        standard.removeObject(forKey: key)
+        standard.set(true, forKey: clearedKey)
+        XCTAssertTrue(target.hasChosenRecordingShortcut, "Removing the shortcut on purpose is a choice too")
     }
 
     func testWritesDefaultsIntoTheDefaultMode() throws {

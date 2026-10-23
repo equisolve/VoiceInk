@@ -8,6 +8,9 @@ struct OnboardingView: View {
     @EnvironmentObject var aiService: AIService
     @EnvironmentObject var enhancementService: AIEnhancementService
     @StateObject private var coordinator = OnboardingCoordinator()
+    // Redraws the practice steps when the person signs in or out, or the organization endpoint changes.
+    @ObservedObject private var managedAISignIn = ManagedAISignInController.shared
+    @ObservedObject private var cloudPolicyMonitor = CloudPolicyMonitor.shared
     let contentMaxWidth: CGFloat = 560
 
     var body: some View {
@@ -122,12 +125,15 @@ struct OnboardingView: View {
                         isInIntroPhase: coordinator.isShowingExperienceIntroPhase,
                         shortcutAction: coordinator.experienceShortcutAction,
                         hasShortcut: coordinator.hasExperienceModeShortcut,
+                        isRecommendedShortcut: coordinator.isUsingRecommendedShortcut,
+                        showsShortcutUsageHint: coordinator.showsShortcutUsageHint,
                         text: coordinator.currentExperienceText,
                         isLastStep: coordinator.isLastExperienceStep,
                         isReady: coordinator.isCurrentExperienceReady(
                             isTranscriptionSetupReady: isTranscriptionSetupReady
                         ),
                         isComplete: coordinator.isCurrentExperienceComplete,
+                        signInRequiredURL: coordinator.signInURLRequiredForCurrentExperience,
                         onBackFromIntro: {
                             coordinator.flow.goToPreviousExperienceStep(enhancementService: enhancementService)
                         },
@@ -137,6 +143,12 @@ struct OnboardingView: View {
                         },
                         onAdvance: {
                             coordinator.flow.advanceExperienceStep(
+                                isTranscriptionSetupReady: isTranscriptionSetupReady,
+                                enhancementService: enhancementService
+                            )
+                        },
+                        onSkipSignIn: {
+                            coordinator.flow.skipCurrentExperienceStep(
                                 isTranscriptionSetupReady: isTranscriptionSetupReady,
                                 enhancementService: enhancementService
                             )

@@ -11,12 +11,15 @@ protocol ManagedDefaultsTarget: AnyObject {
     var canApplySettings: Bool { get }
     /// Why VoiceInk Refine can't run on this Mac, or nil when it can.
     var voiceInkRefineUnavailableReason: String? { get }
+    /// True when the person has set a recording shortcut or removed it on purpose.
+    var hasChosenRecordingShortcut: Bool { get }
 
     func isDownloaded(_ download: ManagedModelDownload) -> Bool
     func isDownloading(_ download: ManagedModelDownload) -> Bool
     func startDownload(_ download: ManagedModelDownload)
     func selectTranscriptionModel(_ model: any TranscriptionModel)
     func applyEnhancement(provider: AIProvider?, model: String?, enabled: Bool?)
+    func setRecordingShortcut(_ shortcut: Shortcut)
 }
 
 /// Applies the organization's managed defaults (see `ManagedDefaults`).
@@ -135,6 +138,11 @@ final class ManagedDefaultsApplier: NSObject {
             )
         }
 
+        // A shortcut the person chose always wins, even after the organization bumps the version.
+        if let shortcut = resolution.shortcut, !target.hasChosenRecordingShortcut {
+            target.setRecordingShortcut(shortcut)
+        }
+
         defaults.set(version, forKey: ManagedDefaults.appliedVersionKey)
         logger.notice("Applied managed defaults version \(version, privacy: .public)")
     }
@@ -204,6 +212,14 @@ final class LiveManagedDefaultsTarget: ManagedDefaultsTarget {
     }
 
     var voiceInkRefineUnavailableReason: String? { voiceInkRefineService.unavailableDescription }
+
+    var hasChosenRecordingShortcut: Bool {
+        ShortcutStore.rawShortcut(for: .primaryRecording) != nil || ShortcutStore.isShortcutCleared(for: .primaryRecording)
+    }
+
+    func setRecordingShortcut(_ shortcut: Shortcut) {
+        ShortcutStore.seedShortcut(shortcut, for: .primaryRecording)
+    }
 
     func isDownloaded(_ download: ManagedModelDownload) -> Bool {
         switch download {

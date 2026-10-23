@@ -110,6 +110,16 @@ enum ShortcutMigration {
         return .hybrid
     }
 
+    /// The recording mode saved for the action, or Hybrid when none is saved. Reads only; migrates nothing.
+    static func savedShortcutMode(for action: ShortcutAction) -> RecordingShortcutManager.Mode {
+        for key in [recordingShortcutModeKey(for: action), legacyRecordingShortcutModeKey(for: action)] {
+            if let value = nonEmptyString(forKey: key), let mode = RecordingShortcutManager.Mode(rawValue: value) {
+                return mode
+            }
+        }
+        return .hybrid
+    }
+
     private static func shortcutSelection(
         from storedValue: String,
         savingTo userDefaultsKey: String,
@@ -128,7 +138,7 @@ enum ShortcutMigration {
             return selection
         }
 
-        if let shortcut = legacyPresetShortcut(for: storedValue),
+        if let shortcut = presetShortcut(named: storedValue),
             !isRecordingShortcutAction(action)
         {
             ShortcutStore.setShortcut(shortcut, for: action)
@@ -196,7 +206,13 @@ enum ShortcutMigration {
         UserDefaults.standard.set(true, forKey: migrationKey)
     }
 
-    private static func legacyPresetShortcut(for rawValue: String) -> Shortcut? {
+    /// The names of the single-key presets that older versions stored, which `DefaultShortcut` also accepts.
+    static let presetShortcutNames = [
+        "rightOption", "leftOption", "leftControl", "rightControl", "fn", "rightCommand", "rightShift",
+    ]
+
+    /// The shortcut for a preset name such as `rightOption`, or nil for any other value.
+    static func presetShortcut(named rawValue: String) -> Shortcut? {
         switch rawValue {
         case "rightOption":
             return .modifierOnly(keyCode: UInt16(kVK_RightOption), modifierFlags: [.option])

@@ -3,6 +3,12 @@ import SwiftUI
 @MainActor
 final class OnboardingFlowController {
     private unowned let coordinator: OnboardingCoordinator
+    /// Where the intro saves the step's starting shortcut, and why a shortcut can't be used. Tests replace both so
+    /// they don't touch the app's settings.
+    var saveShortcut: (Shortcut?, ShortcutAction) -> Void = { ShortcutStore.setShortcut($0, for: $1) }
+    var shortcutValidationError: (Shortcut, ShortcutAction) -> ShortcutValidationError? = {
+        ShortcutValidator.validationError(for: $0, action: $1)
+    }
 
     init(coordinator: OnboardingCoordinator) {
         self.coordinator = coordinator
@@ -213,7 +219,7 @@ final class OnboardingFlowController {
         isTranscriptionSetupReady: Bool,
         enhancementService: AIEnhancementService
     ) {
-        guard coordinator.isCurrentExperienceReady(isTranscriptionSetupReady: isTranscriptionSetupReady) else {
+        guard coordinator.canAdvanceCurrentExperience(isTranscriptionSetupReady: isTranscriptionSetupReady) else {
             return
         }
 
@@ -223,11 +229,13 @@ final class OnboardingFlowController {
         )
     }
 
+    /// Leaves the current practice step without finishing it. The Skip button of a step that waits for Sign in with
+    /// Equisolve uses it; the enhancement settings stay as they are.
     func skipCurrentExperienceStep(
         isTranscriptionSetupReady: Bool,
         enhancementService: AIEnhancementService
     ) {
-        guard coordinator.isReadyForExperience(isTranscriptionSetupReady: isTranscriptionSetupReady) else {
+        guard coordinator.canSkipCurrentExperience(isTranscriptionSetupReady: isTranscriptionSetupReady) else {
             return
         }
 
@@ -499,10 +507,11 @@ final class OnboardingFlowController {
             enhancementService.customPrompts = seedResult.prompts
         }
 
+        let practiceProvider = coordinator.practiceEnhancementProvider
         StarterModeFactory.install(
             kinds: installedKinds,
-            provider: coordinator.selectedOnboardingProvider,
-            modelName: coordinator.selectedOnboardingProvider.defaultModel,
+            provider: practiceProvider.provider,
+            modelName: practiceProvider.model,
             transcriptionModelName: coordinator.selectedOnboardingTranscriptionModelName
                 ?? StarterModeFactory.defaultTranscriptionModelName,
             isRealtimeTranscriptionEnabled: coordinator.selectedOnboardingTranscriptionUsesRealtime,
@@ -545,7 +554,16 @@ final class OnboardingFlowController {
         var clearedActions = coordinator.clearedExperienceShortcutActions
         clearedActions.insert(coordinator.experienceShortcutAction)
         coordinator.clearedExperienceShortcutActions = clearedActions
-        ShortcutStore.setShortcut(nil, for: coordinator.experienceShortcutAction)
+
+        // Start from the organization's recommended shortcut when it has one and it's free to use.
+        let action = coordinator.experienceShortcutAction
+        if let recommended = coordinator.experienceIntroShortcut,
+            shortcutValidationError(recommended, action) == nil
+        {
+            saveShortcut(recommended, action)
+        } else {
+            saveShortcut(nil, action)
+        }
     }
 
     func activateExperienceModeForDemo() {

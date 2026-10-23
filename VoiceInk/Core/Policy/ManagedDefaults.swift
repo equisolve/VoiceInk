@@ -10,11 +10,12 @@ struct ManagedDefaults: Equatable {
     static let enhancementModelKey = "DefaultEnhancementModel"
     static let enhancementEnabledKey = "DefaultEnhancementEnabled"
     static let autoDownloadModelsKey = "AutoDownloadModels"
+    static let shortcutKey = "DefaultShortcut"
     static let versionKey = "ManagedDefaultsVersion"
 
     static let profileKeys = [
         transcriptionModelKey, enhancementProviderKey, enhancementModelKey,
-        enhancementEnabledKey, autoDownloadModelsKey, versionKey,
+        enhancementEnabledKey, autoDownloadModelsKey, shortcutKey, versionKey,
     ]
 
     /// VoiceInk's own record of the last version it applied. Never set by a profile.
@@ -29,6 +30,8 @@ struct ManagedDefaults: Equatable {
     var enhancementModel: String?
     var enhancementEnabled: Bool?
     var autoDownloadModels: [String]
+    /// The recording shortcut as a preset name such as `rightOption`.
+    var shortcut: String?
     var version: Int?
 
     init(
@@ -37,6 +40,7 @@ struct ManagedDefaults: Equatable {
         enhancementModel: String? = nil,
         enhancementEnabled: Bool? = nil,
         autoDownloadModels: [String] = [],
+        shortcut: String? = nil,
         version: Int? = nil
     ) {
         self.transcriptionModel = transcriptionModel
@@ -44,6 +48,7 @@ struct ManagedDefaults: Equatable {
         self.enhancementModel = enhancementModel
         self.enhancementEnabled = enhancementEnabled
         self.autoDownloadModels = autoDownloadModels
+        self.shortcut = shortcut
         self.version = version
     }
 
@@ -62,6 +67,7 @@ struct ManagedDefaults: Equatable {
             autoDownloadModels: (defaults.array(forKey: Self.autoDownloadModelsKey) as? [String] ?? [])
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty },
+            shortcut: string(Self.shortcutKey),
             version: defaults.object(forKey: Self.versionKey) == nil
                 ? nil : defaults.integer(forKey: Self.versionKey)
         )
@@ -70,7 +76,7 @@ struct ManagedDefaults: Equatable {
     static var current: ManagedDefaults { ManagedDefaults(defaults: .standard) }
 
     /// True when the profile sets up transcription or enhancement, so onboarding can skip choosing a model and
-    /// entering an API key.
+    /// entering an API key. `DefaultShortcut` alone doesn't count, because it doesn't set up either one.
     var isPresent: Bool {
         transcriptionModel != nil || enhancementProvider != nil || enhancementEnabled != nil
             || !autoDownloadModels.isEmpty
@@ -101,6 +107,7 @@ struct ManagedDefaultsResolution {
     var enhancementProvider: AIProvider?
     var enhancementModel: String?
     var enhancementEnabled: Bool?
+    var shortcut: Shortcut?
     var downloads: [ManagedModelDownload] = []
     var ignored: [String] = []
 
@@ -157,6 +164,16 @@ struct ManagedDefaultsResolution {
             enhancementEnabled = managed.enhancementEnabled
         }
 
+        if let name = managed.shortcut {
+            if let shortcut = Self.shortcut(named: name) {
+                self.shortcut = shortcut
+            } else {
+                ignored.append(
+                    "\(ManagedDefaults.shortcutKey) \(name) is not a shortcut name; use one of "
+                        + ShortcutMigration.presetShortcutNames.joined(separator: ", "))
+            }
+        }
+
         for id in managed.autoDownloadModels {
             if id.caseInsensitiveCompare(VoiceInkRefineService.modelName) == .orderedSame
                 || id.caseInsensitiveCompare(VoiceInkRefineService.providerName) == .orderedSame
@@ -180,6 +197,14 @@ struct ManagedDefaultsResolution {
 
     private mutating func append(_ download: ManagedModelDownload) {
         if !downloads.contains(download) { downloads.append(download) }
+    }
+
+    /// The recording shortcut for a `DefaultShortcut` value such as `rightOption`, matched without regard to case,
+    /// or nil when the name isn't a preset.
+    static func shortcut(named name: String) -> Shortcut? {
+        ShortcutMigration.presetShortcutNames
+            .first { $0.caseInsensitiveCompare(name) == .orderedSame }
+            .flatMap(ShortcutMigration.presetShortcut(named:))
     }
 
     /// The organization provider matches `Managed` or its `ManagedAIProviderName`. A built-in provider's name always

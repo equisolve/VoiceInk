@@ -77,6 +77,8 @@ final class OnboardingCoordinator: ObservableObject {
     @Published var usableTranscriptionModelKeys: Set<String> = []
 
     let defaults: UserDefaults
+    /// Whether someone has signed in with Equisolve for the organization AI endpoint. Tests replace it.
+    var isManagedAISignedIn: () -> Bool = { ManagedAISignInController.shared.keyAlias != nil }
     var refreshTask: Task<Void, Never>?
     lazy var flow = OnboardingFlowController(coordinator: self)
     lazy var permissions = OnboardingPermissionController(coordinator: self)
@@ -199,6 +201,35 @@ final class OnboardingCoordinator: ObservableObject {
 
     var experienceShortcutAction: ShortcutAction {
         experienceStep.shortcutAction(modeTemplate: experienceModeTemplate)
+    }
+
+    /// The recording shortcut the organization recommends with `DefaultShortcut`, or nil.
+    var recommendedShortcut: Shortcut? {
+        ManagedDefaults(defaults: defaults).shortcut.flatMap(ManagedDefaultsResolution.shortcut(named:))
+    }
+
+    /// The shortcut the step starts with when its intro opens: the organization's recommendation for the recording
+    /// shortcut, or none, so the person picks one.
+    var experienceIntroShortcut: Shortcut? {
+        experienceShortcutAction == .primaryRecording ? recommendedShortcut : nil
+    }
+
+    /// True when the step's shortcut is the one the organization recommends.
+    var isUsingRecommendedShortcut: Bool {
+        guard let recommended = experienceIntroShortcut else { return false }
+        return ShortcutStore.shortcut(for: experienceShortcutAction) == recommended
+    }
+
+    /// True on the step where the person picks the recording shortcut while it uses Hybrid, the default mode, which
+    /// both records while the key is held and starts and stops with single presses.
+    var showsShortcutUsageHint: Bool {
+        experienceStep.shouldClearShortcutOnIntro
+            && experienceShortcutAction == .primaryRecording
+            && primaryRecordingShortcutMode() == .hybrid
+    }
+
+    var primaryRecordingShortcutMode: () -> RecordingShortcutManager.Mode = {
+        ShortcutMigration.savedShortcutMode(for: .primaryRecording)
     }
 
     var shouldSkipCurrentExperienceIntro: Bool {
@@ -402,11 +433,53 @@ final class OnboardingCoordinator: ObservableObject {
     }
 
     var activeExperienceSteps: [OnboardingExperienceStep] {
-        if skipsAPISetup && !isSelectedAPIProviderVerified {
+        if skipsAPISetup && !isSelectedAPIProviderVerified && !practicesWithOrganizationEndpoint {
             return OnboardingExperienceCatalog.steps.filter { !$0.requiresVerifiedAPIProvider }
         }
 
         return OnboardingExperienceCatalog.steps
+    }
+
+    /// True in managed setup when `DefaultEnhancementProvider` names the organization AI endpoint and the endpoint is
+    /// allowed. The AI practice steps then show and use that endpoint instead of a provider key entered in onboarding.
+    var practicesWithOrganizationEndpoint: Bool {
+        guard let name = ManagedDefaults(defaults: defaults).enhancementProvider,
+            let endpoint = ManagedAIEndpoint.current(in: defaults),
+            ManagedDefaultsResolution.enhancementProvider(named: name, managedEndpoint: endpoint) == .managed
+        else {
+            return false
+        }
+        return CloudPolicy.isEnhancementProviderAllowed(
+            .managed, cloudAllowed: CloudPolicy.isCloudAllowed(in: defaults), managedEndpoint: endpoint)
+    }
+
+    /// The provider and model the practice steps' modes use.
+    var practiceEnhancementProvider: (provider: AIProvider, model: String?) {
+        if practicesWithOrganizationEndpoint, let endpoint = ManagedAIEndpoint.current(in: defaults) {
+            return (.managed, endpoint.model)
+        }
+        return (selectedOnboardingProvider, selectedOnboardingProvider.defaultModel)
+    }
+
+    /// The sign-in URL when the current practice step runs AI enhancement and the organization AI endpoint needs the
+    /// person to sign in first (see `ManagedAIEndpoint.requiresSignIn`). Nil when the step can run as it is.
+    var signInURLRequiredForCurrentExperience: URL? {
+        guard experienceStep.requiresVerifiedAPIProvider,
+            practicesWithOrganizationEndpoint,
+            let endpoint = ManagedAIEndpoint.current(in: defaults),
+            ManagedAIEndpoint.requiresSignIn(
+                endpoint: endpoint,
+                profileToken: ManagedAIEndpoint.token(in: defaults),
+                isSignedIn: isManagedAISignedIn()
+            )
+        else {
+            return nil
+        }
+        return endpoint.signInURL
+    }
+
+    var isCurrentExperienceWaitingForSignIn: Bool {
+        signInURLRequiredForCurrentExperience != nil
     }
 
     private var contextAwarenessInsertionIndices: [Int] {
@@ -530,6 +603,17 @@ final class OnboardingCoordinator: ObservableObject {
     func isCurrentExperienceReady(isTranscriptionSetupReady: Bool) -> Bool {
         isReadyForExperience(isTranscriptionSetupReady: isTranscriptionSetupReady) && isExperienceModeInstalled
             && hasExperienceModeShortcut
+    }
+
+    /// Whether Next can leave the current practice step. A step waiting for Sign in with Equisolve is left only by
+    /// signing in or by its Skip button (see `canSkipCurrentExperience`).
+    func canAdvanceCurrentExperience(isTranscriptionSetupReady: Bool) -> Bool {
+        isCurrentExperienceReady(isTranscriptionSetupReady: isTranscriptionSetupReady)
+            && !isCurrentExperienceWaitingForSignIn
+    }
+
+    func canSkipCurrentExperience(isTranscriptionSetupReady: Bool) -> Bool {
+        isReadyForExperience(isTranscriptionSetupReady: isTranscriptionSetupReady)
     }
 
 }

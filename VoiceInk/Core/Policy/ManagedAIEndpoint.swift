@@ -99,6 +99,14 @@ struct ManagedAIEndpoint: Equatable {
         )
     }
 
+    /// True when the endpoint is set up for sign-in, the profile sets no `ManagedAIToken`, and nobody has signed in,
+    /// so AI enhancement through the endpoint can't run until the person signs in. Matches the `.signInRequired` case
+    /// of `ManagedAICredential.resolve`.
+    static func requiresSignIn(endpoint: ManagedAIEndpoint?, profileToken: String, isSignedIn: Bool) -> Bool {
+        guard let endpoint, endpoint.signInURL != nil else { return false }
+        return profileToken.isEmpty && !isSignedIn
+    }
+
     /// True when a configuration profile sets the endpoint, so the UI can say it's managed.
     static var isManaged: Bool {
         AppPreferences.defaults.objectIsForced(forKey: endpointURLKey)
