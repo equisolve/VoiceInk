@@ -12,14 +12,23 @@ struct ManagedDefaults: Equatable {
     static let autoDownloadModelsKey = "AutoDownloadModels"
     static let shortcutKey = "DefaultShortcut"
     static let versionKey = "ManagedDefaultsVersion"
+    /// Hides the Dock icon. Applied once per value, independent of `ManagedDefaultsVersion`.
+    static let menuBarOnlyKey = "DefaultMenuBarOnly"
+    /// Opens VoiceInk at login. Applied once per value, independent of `ManagedDefaultsVersion`.
+    static let launchAtLoginKey = "DefaultLaunchAtLogin"
 
     static let profileKeys = [
         transcriptionModelKey, enhancementProviderKey, enhancementModelKey,
         enhancementEnabledKey, autoDownloadModelsKey, shortcutKey, versionKey, EnhancementProviderLock.key,
+        menuBarOnlyKey, launchAtLoginKey,
     ]
 
     /// VoiceInk's own record of the last version it applied. Never set by a profile.
     static let appliedVersionKey = "ManagedDefaultsAppliedVersion"
+    /// VoiceInk's own record of the last `DefaultMenuBarOnly` and `DefaultLaunchAtLogin` values it applied. Never
+    /// set by a profile.
+    static let appliedMenuBarOnlyKey = "ManagedDefaultsAppliedMenuBarOnly"
+    static let appliedLaunchAtLoginKey = "ManagedDefaultsAppliedLaunchAtLogin"
     /// The default transcription model waiting for its download to finish, and the model that was selected when
     /// it was queued. VoiceInk switches only if the selection hasn't changed since.
     static let pendingTranscriptionModelKey = "ManagedDefaultsPendingTranscriptionModel"
@@ -33,6 +42,8 @@ struct ManagedDefaults: Equatable {
     /// The recording shortcut as a preset name such as `rightOption`.
     var shortcut: String?
     var version: Int?
+    var menuBarOnly: Bool?
+    var launchAtLogin: Bool?
 
     init(
         transcriptionModel: String? = nil,
@@ -41,7 +52,9 @@ struct ManagedDefaults: Equatable {
         enhancementEnabled: Bool? = nil,
         autoDownloadModels: [String] = [],
         shortcut: String? = nil,
-        version: Int? = nil
+        version: Int? = nil,
+        menuBarOnly: Bool? = nil,
+        launchAtLogin: Bool? = nil
     ) {
         self.transcriptionModel = transcriptionModel
         self.enhancementProvider = enhancementProvider
@@ -50,6 +63,8 @@ struct ManagedDefaults: Equatable {
         self.autoDownloadModels = autoDownloadModels
         self.shortcut = shortcut
         self.version = version
+        self.menuBarOnly = menuBarOnly
+        self.launchAtLogin = launchAtLogin
     }
 
     init(defaults: UserDefaults) {
@@ -57,19 +72,23 @@ struct ManagedDefaults: Equatable {
             let value = defaults.string(forKey: key)?.trimmingCharacters(in: .whitespacesAndNewlines)
             return value?.isEmpty == false ? value : nil
         }
+        func bool(_ key: String) -> Bool? {
+            defaults.object(forKey: key) == nil ? nil : defaults.bool(forKey: key)
+        }
 
         self.init(
             transcriptionModel: string(Self.transcriptionModelKey),
             enhancementProvider: string(Self.enhancementProviderKey),
             enhancementModel: string(Self.enhancementModelKey),
-            enhancementEnabled: defaults.object(forKey: Self.enhancementEnabledKey) == nil
-                ? nil : defaults.bool(forKey: Self.enhancementEnabledKey),
+            enhancementEnabled: bool(Self.enhancementEnabledKey),
             autoDownloadModels: (defaults.array(forKey: Self.autoDownloadModelsKey) as? [String] ?? [])
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty },
             shortcut: string(Self.shortcutKey),
             version: defaults.object(forKey: Self.versionKey) == nil
-                ? nil : defaults.integer(forKey: Self.versionKey)
+                ? nil : defaults.integer(forKey: Self.versionKey),
+            menuBarOnly: bool(Self.menuBarOnlyKey),
+            launchAtLogin: bool(Self.launchAtLoginKey)
         )
     }
 

@@ -22,6 +22,11 @@ protocol ManagedDefaultsTarget: AnyObject {
     func setRecordingShortcut(_ shortcut: Shortcut)
     /// Selects the locked provider as the global AI enhancement provider. Modes keep their saved provider.
     func applyEnhancementLock(_ lock: EnhancementProviderLock)
+    /// Hides or shows the Dock icon, the same as the Hide Dock Icon toggle in Settings.
+    func setMenuBarOnly(_ menuBarOnly: Bool)
+    /// Turns Launch at Login on or off, the same as the toggle in Settings. Returns false when the login item
+    /// couldn't be registered or removed.
+    func setLaunchAtLogin(_ enabled: Bool) async -> Bool
 }
 
 /// Applies the organization's managed defaults (see `ManagedDefaults`).
@@ -29,6 +34,8 @@ protocol ManagedDefaultsTarget: AnyObject {
 /// Downloads start on every launch and whenever the profile changes, so a failed download is retried. Settings are
 /// written only when `ManagedDefaultsVersion` is greater than the version applied last, and that version is then
 /// recorded, so a change the person makes afterward survives relaunches until the organization bumps the version.
+/// `DefaultMenuBarOnly` and `DefaultLaunchAtLogin` don't use the version: each applies once for every value the
+/// profile sets.
 @MainActor
 final class ManagedDefaultsApplier: NSObject {
     private let defaults: UserDefaults
@@ -37,6 +44,8 @@ final class ManagedDefaultsApplier: NSObject {
     private let logger = Logger(subsystem: "com.prakashjoshipax.voiceink", category: "ManagedDefaults")
     private var isObserving = false
     private var observers: [NSObjectProtocol] = []
+    /// The Launch at Login change in progress, if any.
+    private(set) var launchAtLoginTask: Task<Void, Never>?
 
     init(
         defaults: UserDefaults = AppPreferences.defaults,
@@ -108,7 +117,49 @@ final class ManagedDefaultsApplier: NSObject {
         startDownloads(resolution.downloads)
         applySettingsIfNeeded(managed, resolution: resolution)
         applyEnhancementLock()
+        applyMenuBarOnly(managed)
+        applyLaunchAtLogin(managed)
         switchToPendingTranscriptionModel()
+    }
+
+    /// The value to apply for `DefaultMenuBarOnly` or `DefaultLaunchAtLogin`, or nil when the profile doesn't set
+    /// the key or VoiceInk already applied this value. These keys apply once for each value the profile sets,
+    /// without `ManagedDefaultsVersion`, so the person can change the setting afterward.
+    private func valueToApply(_ value: Bool?, appliedKey: String) -> Bool? {
+        guard let value, target.canApplySettings else { return nil }
+        let applied = defaults.object(forKey: appliedKey) == nil ? nil : defaults.bool(forKey: appliedKey)
+        return applied == value ? nil : value
+    }
+
+    private func applyMenuBarOnly(_ managed: ManagedDefaults) {
+        guard let menuBarOnly = valueToApply(managed.menuBarOnly, appliedKey: ManagedDefaults.appliedMenuBarOnlyKey)
+        else { return }
+        target.setMenuBarOnly(menuBarOnly)
+        defaults.set(menuBarOnly, forKey: ManagedDefaults.appliedMenuBarOnlyKey)
+        logger.notice("Applied \(ManagedDefaults.menuBarOnlyKey, privacy: .public) \(menuBarOnly, privacy: .public)")
+    }
+
+    /// Records the value only when the login item changed, so a failed registration is tried again at the next
+    /// launch or profile change.
+    private func applyLaunchAtLogin(_ managed: ManagedDefaults) {
+        guard launchAtLoginTask == nil,
+            let enabled = valueToApply(managed.launchAtLogin, appliedKey: ManagedDefaults.appliedLaunchAtLoginKey)
+        else { return }
+
+        launchAtLoginTask = Task { [target, defaults, logger] in
+            let succeeded = await target.setLaunchAtLogin(enabled)
+            launchAtLoginTask = nil
+            guard succeeded else {
+                logger.error(
+                    "Couldn't apply \(ManagedDefaults.launchAtLoginKey, privacy: .public) \(enabled, privacy: .public); trying again at the next launch"
+                )
+                return
+            }
+            defaults.set(enabled, forKey: ManagedDefaults.appliedLaunchAtLoginKey)
+            logger.notice("Applied \(ManagedDefaults.launchAtLoginKey, privacy: .public) \(enabled, privacy: .public)")
+            // The profile may have changed while the login item was updating.
+            applyLaunchAtLogin(ManagedDefaults(defaults: defaults))
+        }
     }
 
     /// The provider lock applies on every launch and profile change, not once per version, because the person can't
@@ -207,17 +258,34 @@ final class LiveManagedDefaultsTarget: ManagedDefaultsTarget {
     private let aiService: AIService
     private let transcribeCppModelManager = TranscribeCppModelManager.shared
     private let voiceInkRefineService = VoiceInkRefineService.shared
+    private let menuBarManager: MenuBarManager?
 
     init(
         transcriptionModelManager: TranscriptionModelManager,
         whisperModelManager: WhisperModelManager,
         fluidAudioModelManager: FluidAudioModelManager,
-        aiService: AIService
+        aiService: AIService,
+        menuBarManager: MenuBarManager? = nil
     ) {
         self.transcriptionModelManager = transcriptionModelManager
         self.whisperModelManager = whisperModelManager
         self.fluidAudioModelManager = fluidAudioModelManager
         self.aiService = aiService
+        self.menuBarManager = menuBarManager
+    }
+
+    /// Goes through `MenuBarManager`, which saves the setting and updates the activation policy and main window.
+    /// Without one, saves the setting for `MenuBarManager` to read when it starts.
+    func setMenuBarOnly(_ menuBarOnly: Bool) {
+        if let menuBarManager {
+            menuBarManager.isMenuBarOnly = menuBarOnly
+        } else {
+            UserDefaults.standard.set(menuBarOnly, forKey: "IsMenuBarOnly")
+        }
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) async -> Bool {
+        await LaunchAtLoginManager.shared.setEnabledAndWait(enabled)
     }
 
     var transcriptionModels: [any TranscriptionModel] { transcriptionModelManager.allAvailableModels }

@@ -48,6 +48,22 @@ final class LaunchAtLoginManager: ObservableObject {
         }
     }
 
+    /// Calls `setEnabled(_:)` and waits for the change to finish. Returns false when the login item couldn't be
+    /// registered or removed. A login item that waits for the person's approval in System Settings counts as
+    /// registered, because the person decides there.
+    func setEnabledAndWait(_ enabled: Bool) async -> Bool {
+        setEnabled(enabled)
+        while let updateTask {
+            await updateTask.value
+        }
+
+        let status = await Self.readStatus()
+        if enabled, status == .requiresApproval {
+            logger.notice("Launch at login is registered and waits for approval in System Settings")
+        }
+        return enabled ? status == .enabled || status == .requiresApproval : status != .enabled
+    }
+
     func currentEnabledStatus() async -> Bool {
         operationGeneration += 1
 
@@ -90,8 +106,12 @@ final class LaunchAtLoginManager: ObservableObject {
     }
 
     private nonisolated static func readEnabledStatus() async -> Bool {
+        await readStatus() == .enabled
+    }
+
+    private nonisolated static func readStatus() async -> SMAppService.Status {
         await Task.detached(priority: .utility) {
-            SMAppService.mainApp.status == .enabled
+            SMAppService.mainApp.status
         }.value
     }
 

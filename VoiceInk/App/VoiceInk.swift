@@ -170,12 +170,18 @@ struct VoiceInkApp: App {
         transcriptionModelManager.loadCurrentTranscriptionModel()
         CloudPolicyMonitor.shared.start()
 
+        // Created before the managed defaults, so DefaultMenuBarOnly goes through it.
+        let menuBarManager = MenuBarManager()
+        _menuBarManager = StateObject(wrappedValue: menuBarManager)
+        menuBarManager.configure(engine: engine)
+
         managedDefaultsApplier = ManagedDefaultsApplier(
             target: LiveManagedDefaultsTarget(
                 transcriptionModelManager: transcriptionModelManager,
                 whisperModelManager: whisperModelManager,
                 fluidAudioModelManager: fluidAudioModelManager,
-                aiService: aiService
+                aiService: aiService,
+                menuBarManager: menuBarManager
             )
         )
         managedDefaultsApplier.start()
@@ -189,10 +195,6 @@ struct VoiceInkApp: App {
         // 7. Create other services that depend on engine
         let recordingShortcutManager = RecordingShortcutManager(engine: engine, recorderUIManager: recorderUIManager)
         _recordingShortcutManager = StateObject(wrappedValue: recordingShortcutManager)
-
-        let menuBarManager = MenuBarManager()
-        _menuBarManager = StateObject(wrappedValue: menuBarManager)
-        menuBarManager.configure(engine: engine)
 
         let activeWindowService = ActiveWindowService.shared
         _activeWindowService = StateObject(wrappedValue: activeWindowService)
