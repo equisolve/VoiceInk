@@ -32,6 +32,12 @@ private final class FakeManagedDefaultsTarget: ManagedDefaultsTarget {
     func applyEnhancement(provider: AIProvider?, model: String?, enabled: Bool?) {
         enhancements.append((provider, model, enabled))
     }
+
+    var locks: [EnhancementProviderLock] = []
+
+    func applyEnhancementLock(_ lock: EnhancementProviderLock) {
+        locks.append(lock)
+    }
 }
 
 /// Every test reads and writes its own defaults suite, never the app's settings.
@@ -441,6 +447,52 @@ final class ManagedDefaultsTests: XCTestCase {
         makeApplier().apply()
 
         XCTAssertEqual(target.enhancements.first?.provider, .voiceInkRefine)
+    }
+
+    // MARK: - Provider lock
+
+    func testProviderLockAppliesOnEveryLaunchWithoutAVersion() {
+        cloudAllowed = false
+        setManagedEndpoint()
+        setProfile(provider: "Managed", version: nil)
+        defaults.set(true, forKey: EnhancementProviderLock.key)
+
+        makeApplier().apply()
+        makeApplier().apply()
+
+        XCTAssertEqual(target.locks, Array(repeating: EnhancementProviderLock(provider: .managed, model: "voiceink-cleanup"), count: 2))
+        XCTAssertTrue(target.enhancements.isEmpty, "The lock doesn't write the default mode or the on/off switch")
+    }
+
+    func testProviderLockFallsBackToRefineWhenTheEndpointIsMissing() {
+        cloudAllowed = false
+        setProfile(provider: "Managed", version: nil)
+        defaults.set(true, forKey: EnhancementProviderLock.key)
+
+        makeApplier().apply()
+
+        XCTAssertEqual(target.locks.map(\.provider), [.voiceInkRefine])
+    }
+
+    func testProviderLockWaitsForOnboarding() {
+        setManagedEndpoint()
+        setProfile(provider: "Managed", version: nil)
+        defaults.set(true, forKey: EnhancementProviderLock.key)
+        target.canApplySettings = false
+
+        makeApplier().apply()
+
+        XCTAssertTrue(target.locks.isEmpty)
+    }
+
+    func testNoProviderLockWithoutTheKey() {
+        setManagedEndpoint()
+        setProfile(provider: "Managed", enabled: true, version: 1)
+
+        makeApplier().apply()
+
+        XCTAssertTrue(target.locks.isEmpty)
+        XCTAssertEqual(target.enhancements.first?.provider, .managed)
     }
 
     // MARK: - Downloads

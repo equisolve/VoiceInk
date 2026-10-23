@@ -20,6 +20,8 @@ protocol ManagedDefaultsTarget: AnyObject {
     func selectTranscriptionModel(_ model: any TranscriptionModel)
     func applyEnhancement(provider: AIProvider?, model: String?, enabled: Bool?)
     func setRecordingShortcut(_ shortcut: Shortcut)
+    /// Selects the locked provider as the global AI enhancement provider. Modes keep their saved provider.
+    func applyEnhancementLock(_ lock: EnhancementProviderLock)
 }
 
 /// Applies the organization's managed defaults (see `ManagedDefaults`).
@@ -105,7 +107,25 @@ final class ManagedDefaultsApplier: NSObject {
 
         startDownloads(resolution.downloads)
         applySettingsIfNeeded(managed, resolution: resolution)
+        applyEnhancementLock()
         switchToPendingTranscriptionModel()
+    }
+
+    /// The provider lock applies on every launch and profile change, not once per version, because the person can't
+    /// change it.
+    private func applyEnhancementLock() {
+        let (lock, ignored) = EnhancementProviderLock.resolve(
+            defaults: defaults,
+            isCloudAllowed: isCloudAllowed(),
+            voiceInkRefineUnavailableReason: target.voiceInkRefineUnavailableReason,
+            managedEndpoint: ManagedAIEndpoint.current(in: defaults)
+        )
+        for reason in ignored {
+            logger.warning("Provider lock: \(reason, privacy: .public)")
+        }
+        guard let lock, target.canApplySettings else { return }
+        target.applyEnhancementLock(lock)
+        logger.notice("Locked AI enhancement provider to \(lock.provider.rawValue, privacy: .public)")
     }
 
     private func startDownloads(_ downloads: [ManagedModelDownload]) {
@@ -304,6 +324,20 @@ final class LiveManagedDefaultsTarget: ManagedDefaultsTarget {
                     mode.selectedPrompt = PromptTemplates.defaultPromptId.uuidString
                 }
             }
+        }
+    }
+
+    func applyEnhancementLock(_ lock: EnhancementProviderLock) {
+        Self.applyEnhancementLock(lock, to: aiService)
+    }
+
+    /// Selects the locked provider, and the organization's model if it sets one, as the global AI enhancement choice.
+    static func applyEnhancementLock(_ lock: EnhancementProviderLock, to aiService: AIService) {
+        if aiService.selectedProvider != lock.provider {
+            aiService.selectedProvider = lock.provider
+        }
+        if let model = lock.model, aiService.selectedModel(for: lock.provider) != model {
+            aiService.selectModel(model, for: lock.provider)
         }
     }
 
