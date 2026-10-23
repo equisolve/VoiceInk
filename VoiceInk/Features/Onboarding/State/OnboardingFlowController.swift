@@ -213,7 +213,7 @@ final class OnboardingFlowController {
         isTranscriptionSetupReady: Bool,
         enhancementService: AIEnhancementService
     ) {
-        guard coordinator.isCurrentExperienceReady(isTranscriptionSetupReady: isTranscriptionSetupReady) else {
+        guard coordinator.canAdvanceCurrentExperience(isTranscriptionSetupReady: isTranscriptionSetupReady) else {
             return
         }
 
@@ -223,11 +223,13 @@ final class OnboardingFlowController {
         )
     }
 
+    /// Leaves the current practice step without finishing it. The Skip button of a step that waits for Sign in with
+    /// Equisolve uses it; the enhancement settings stay as they are.
     func skipCurrentExperienceStep(
         isTranscriptionSetupReady: Bool,
         enhancementService: AIEnhancementService
     ) {
-        guard coordinator.isReadyForExperience(isTranscriptionSetupReady: isTranscriptionSetupReady) else {
+        guard coordinator.canSkipCurrentExperience(isTranscriptionSetupReady: isTranscriptionSetupReady) else {
             return
         }
 
@@ -499,10 +501,11 @@ final class OnboardingFlowController {
             enhancementService.customPrompts = seedResult.prompts
         }
 
+        let practiceProvider = coordinator.practiceEnhancementProvider
         StarterModeFactory.install(
             kinds: installedKinds,
-            provider: coordinator.selectedOnboardingProvider,
-            modelName: coordinator.selectedOnboardingProvider.defaultModel,
+            provider: practiceProvider.provider,
+            modelName: practiceProvider.model,
             transcriptionModelName: coordinator.selectedOnboardingTranscriptionModelName
                 ?? StarterModeFactory.defaultTranscriptionModelName,
             isRealtimeTranscriptionEnabled: coordinator.selectedOnboardingTranscriptionUsesRealtime,

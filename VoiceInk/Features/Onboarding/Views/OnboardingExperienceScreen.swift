@@ -10,10 +10,13 @@ struct OnboardingExperienceScreen: View {
     let isLastStep: Bool
     let isReady: Bool
     let isComplete: Bool
+    /// Set when the step runs AI enhancement through the organization endpoint and the person must sign in first.
+    let signInRequiredURL: URL?
     let onBackFromIntro: () -> Void
     let onContinueIntro: () -> Void
     let onBackFromPractice: () -> Void
     let onAdvance: () -> Void
+    let onSkipSignIn: () -> Void
     let onShortcutChanged: () -> Void
     let onAppear: () -> Void
 
@@ -66,8 +69,13 @@ struct OnboardingExperienceScreen: View {
             showsHeader: true
         ) {
             VStack(spacing: 16) {
-                // Enhancement through the organization endpoint needs a signed-in key when sign-in is set up.
-                if step.kind == .enhance, let endpoint = cloudPolicyMonitor.managedEndpoint, endpoint.signInURL != nil {
+                // Enhancement through the organization endpoint needs a signed-in key when sign-in is set up. Until
+                // the person signs in, the practice area is turned off and only Sign In or Skip leaves the step.
+                if let signInRequiredURL {
+                    OnboardingSignInRequiredCard(signInURL: signInRequiredURL, onSkip: onSkipSignIn)
+                } else if step.kind == .enhance, let endpoint = cloudPolicyMonitor.managedEndpoint,
+                    endpoint.signInURL != nil
+                {
                     ManagedAIProviderCard(endpoint: endpoint)
                 }
 
@@ -78,12 +86,16 @@ struct OnboardingExperienceScreen: View {
                     text: $text,
                     onShortcutChanged: onShortcutChanged
                 )
+                .disabled(signInRequiredURL != nil)
+                .opacity(signInRequiredURL != nil ? 0.4 : 1)
+                .accessibilityHint(signInRequiredURL != nil ? Text("Sign in with Equisolve to try this step.") : Text(""))
             }
+            .animation(.easeInOut(duration: 0.2), value: signInRequiredURL)
         } bottomBar: {
             OnboardingBottomBar(
                 leadingTitle: "Back",
                 primaryTitle: isLastStep ? "Continue" : "Next",
-                isPrimaryEnabled: isReady && isComplete,
+                isPrimaryEnabled: isReady && isComplete && signInRequiredURL == nil,
                 onLeading: onBackFromPractice,
                 onPrimary: onAdvance
             )

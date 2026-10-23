@@ -77,6 +77,8 @@ final class OnboardingCoordinator: ObservableObject {
     @Published var usableTranscriptionModelKeys: Set<String> = []
 
     let defaults: UserDefaults
+    /// Whether someone has signed in with Equisolve for the organization AI endpoint. Tests replace it.
+    var isManagedAISignedIn: () -> Bool = { ManagedAISignInController.shared.keyAlias != nil }
     var refreshTask: Task<Void, Never>?
     lazy var flow = OnboardingFlowController(coordinator: self)
     lazy var permissions = OnboardingPermissionController(coordinator: self)
@@ -402,11 +404,52 @@ final class OnboardingCoordinator: ObservableObject {
     }
 
     var activeExperienceSteps: [OnboardingExperienceStep] {
-        if skipsAPISetup && !isSelectedAPIProviderVerified {
+        if skipsAPISetup && !isSelectedAPIProviderVerified && !practicesWithOrganizationEndpoint {
             return OnboardingExperienceCatalog.steps.filter { !$0.requiresVerifiedAPIProvider }
         }
 
         return OnboardingExperienceCatalog.steps
+    }
+
+    /// True in managed setup when `DefaultEnhancementProvider` names the organization AI endpoint and the endpoint is
+    /// allowed. The AI practice steps then show and use that endpoint instead of a provider key entered in onboarding.
+    var practicesWithOrganizationEndpoint: Bool {
+        guard let name = ManagedDefaults(defaults: defaults).enhancementProvider,
+            let endpoint = ManagedAIEndpoint.current(in: defaults),
+            ManagedDefaultsResolution.enhancementProvider(named: name, managedEndpoint: endpoint) == .managed
+        else {
+            return false
+        }
+        return CloudPolicy.isEnhancementProviderAllowed(
+            .managed, cloudAllowed: CloudPolicy.isCloudAllowed(in: defaults), managedEndpoint: endpoint)
+    }
+
+    /// The provider and model the practice steps' modes use.
+    var practiceEnhancementProvider: (provider: AIProvider, model: String?) {
+        if practicesWithOrganizationEndpoint, let endpoint = ManagedAIEndpoint.current(in: defaults) {
+            return (.managed, endpoint.model)
+        }
+        return (selectedOnboardingProvider, selectedOnboardingProvider.defaultModel)
+    }
+
+    /// The sign-in URL when the current practice step runs AI enhancement and the organization AI endpoint needs the
+    /// person to sign in first (see `ManagedAIEndpoint.requiresSignIn`). Nil when the step can run as it is.
+    var signInURLRequiredForCurrentExperience: URL? {
+        guard experienceStep.requiresVerifiedAPIProvider,
+            let endpoint = ManagedAIEndpoint.current(in: defaults),
+            ManagedAIEndpoint.requiresSignIn(
+                endpoint: endpoint,
+                profileToken: ManagedAIEndpoint.token(in: defaults),
+                isSignedIn: isManagedAISignedIn()
+            )
+        else {
+            return nil
+        }
+        return endpoint.signInURL
+    }
+
+    var isCurrentExperienceWaitingForSignIn: Bool {
+        signInURLRequiredForCurrentExperience != nil
     }
 
     private var contextAwarenessInsertionIndices: [Int] {
@@ -530,6 +573,17 @@ final class OnboardingCoordinator: ObservableObject {
     func isCurrentExperienceReady(isTranscriptionSetupReady: Bool) -> Bool {
         isReadyForExperience(isTranscriptionSetupReady: isTranscriptionSetupReady) && isExperienceModeInstalled
             && hasExperienceModeShortcut
+    }
+
+    /// Whether Next can leave the current practice step. A step waiting for Sign in with Equisolve is left only by
+    /// signing in or by its Skip button (see `canSkipCurrentExperience`).
+    func canAdvanceCurrentExperience(isTranscriptionSetupReady: Bool) -> Bool {
+        isCurrentExperienceReady(isTranscriptionSetupReady: isTranscriptionSetupReady)
+            && !isCurrentExperienceWaitingForSignIn
+    }
+
+    func canSkipCurrentExperience(isTranscriptionSetupReady: Bool) -> Bool {
+        isReadyForExperience(isTranscriptionSetupReady: isTranscriptionSetupReady)
     }
 
 }
