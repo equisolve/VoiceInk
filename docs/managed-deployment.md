@@ -276,8 +276,8 @@ These keys set starting choices that users can change later. They are separate f
 - **Once for each value.** VoiceInk applies each key the first time it sees it, at launch or when the profile changes, and records the value it applied. It applies the key again only when the profile changes to a different value. Raising `ManagedDefaultsVersion` doesn't apply these keys again, and they don't need a version.
 - **Existing and new installs.** People who already use VoiceInk get the setting once, the same as a new install. After that, a user's changes stay, even across restarts.
 - **After onboarding.** On a new install, VoiceInk applies these keys when the user finishes onboarding, so onboarding opens in its window with the Dock icon showing.
-- **Right away.** VoiceInk changes the Dock icon and the login item while it runs, the same as the switches in **Settings**. Hiding the Dock icon also hides the main window; the menu bar item opens it again.
-- **Login item failures.** If macOS can't add or remove the login item, VoiceInk writes a log message and tries again at the next launch. A login item that waits for approval in **System Settings > General > Login Items** counts as added.
+- **Right away.** VoiceInk changes the setting and the login item while it runs. Unlike the **Hide Dock Icon** switch in **Settings**, `DefaultMenuBarOnly` doesn't close an open window, such as the one where the user finished onboarding. The Dock icon stays until the user closes the last VoiceInk window, and then it's hidden.
+- **Login item failures.** If macOS can't add or remove the login item, VoiceInk writes a log message and tries again at the next launch, not sooner. A login item that waits for approval in **System Settings > General > Login Items** counts as added. If the user changes **Launch at Login** while VoiceInk is applying the key, the user's choice stays and VoiceInk records the key as applied.
 - **No keys.** When the profile doesn't set a key, VoiceInk doesn't change that setting.
 
 #### Approve the login item ahead of time (optional)

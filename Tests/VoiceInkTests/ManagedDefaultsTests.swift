@@ -42,11 +42,16 @@ private final class FakeManagedDefaultsTarget: ManagedDefaultsTarget {
     var menuBarOnlyChanges: [Bool] = []
     var launchAtLoginChanges: [Bool] = []
     var launchAtLoginSucceeds = true
+    /// Runs while a Launch at Login change is in progress, before it finishes.
+    var whileSettingLaunchAtLogin: (() -> Void)?
 
     func setMenuBarOnly(_ menuBarOnly: Bool) { menuBarOnlyChanges.append(menuBarOnly) }
 
     func setLaunchAtLogin(_ enabled: Bool) async -> Bool {
         launchAtLoginChanges.append(enabled)
+        await Task.yield()
+        whileSettingLaunchAtLogin?()
+        whileSettingLaunchAtLogin = nil
         return launchAtLoginSucceeds
     }
 }
@@ -220,7 +225,14 @@ final class ManagedDefaultsTests: XCTestCase {
     private func launch() async {
         let applier = makeApplier()
         applier.apply()
-        await applier.launchAtLoginTask?.value
+        await finishLaunchAtLogin(applier)
+    }
+
+    /// Waits for every Launch at Login change the applier starts, including one it starts after the last finishes.
+    private func finishLaunchAtLogin(_ applier: ManagedDefaultsApplier) async {
+        while let task = applier.launchAtLoginTask {
+            await task.value
+        }
     }
 
     /// Starts a new launch with the same settings and a fresh app.
@@ -355,6 +367,61 @@ final class ManagedDefaultsTests: XCTestCase {
         }
 
         XCTAssertEqual(target.menuBarOnlyChanges, [true])
+    }
+
+    func testProfileChangeDuringALaunchAtLoginChangeAppliesWhenItFinishes() async {
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+        target.whileSettingLaunchAtLogin = { [defaults] in
+            defaults?.set(false, forKey: ManagedDefaults.launchAtLoginKey)
+        }
+        let applier = makeApplier()
+
+        applier.apply()
+        await finishLaunchAtLogin(applier)
+
+        XCTAssertEqual(target.launchAtLoginChanges, [true, false])
+        XCTAssertEqual(defaults.object(forKey: ManagedDefaults.appliedLaunchAtLoginKey) as? Bool, false)
+    }
+
+    func testFailedLaunchAtLoginIsTriedOnlyOncePerLaunch() async {
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+        target.launchAtLoginSucceeds = false
+        let applier = makeApplier()
+
+        applier.apply()
+        await finishLaunchAtLogin(applier)
+        applier.apply()
+        await finishLaunchAtLogin(applier)
+        XCTAssertEqual(target.launchAtLoginChanges, [true], "A failed value must not be retried in the same run")
+
+        // A different value from the profile is still applied in the same run.
+        target.launchAtLoginSucceeds = true
+        defaults.set(false, forKey: ManagedDefaults.launchAtLoginKey)
+        applier.apply()
+        await finishLaunchAtLogin(applier)
+        XCTAssertEqual(target.launchAtLoginChanges, [true, false])
+    }
+
+    func testFinishingOnboardingAppliesDockIconAndLaunchAtLogin() async throws {
+        target.canApplySettings = false
+        defaults.set(true, forKey: ManagedDefaults.menuBarOnlyKey)
+        defaults.set(true, forKey: ManagedDefaults.launchAtLoginKey)
+        let applier = makeApplier()
+        applier.start()
+        defer { applier.stop() }
+        await finishLaunchAtLogin(applier)
+        XCTAssertEqual(target.menuBarOnlyChanges, [])
+        XCTAssertEqual(target.launchAtLoginChanges, [])
+
+        target.canApplySettings = true
+        defaults.set(true, forKey: OnboardingSettings.completedV2Key)
+        for _ in 0..<50 where target.launchAtLoginChanges.isEmpty {
+            try await Task.sleep(nanoseconds: 20_000_000)
+        }
+        await finishLaunchAtLogin(applier)
+
+        XCTAssertEqual(target.menuBarOnlyChanges, [true])
+        XCTAssertEqual(target.launchAtLoginChanges, [true])
     }
 
     // MARK: - Recording shortcut
@@ -918,7 +985,14 @@ final class LiveManagedDefaultsTargetTests: XCTestCase {
         try? FileManager.default.removeItem(at: modelsDirectory)
     }
 
-    private func makeTarget() -> LiveManagedDefaultsTarget {
+    private final class FakeMenuBarOnlySetting: MenuBarOnlySetting {
+        var changes: [Bool] = []
+        func setMenuBarOnlyKeepingWindows(_ menuBarOnly: Bool) { changes.append(menuBarOnly) }
+    }
+
+    private let menuBar = FakeMenuBarOnlySetting()
+
+    private func makeTarget(launchAtLoginManager: LaunchAtLoginManager? = nil) -> LiveManagedDefaultsTarget {
         let whisper = WhisperModelManager(modelsDirectory: modelsDirectory)
         let fluidAudio = FluidAudioModelManager()
         return LiveManagedDefaultsTarget(
@@ -926,8 +1000,29 @@ final class LiveManagedDefaultsTargetTests: XCTestCase {
                 whisperModelManager: whisper, fluidAudioModelManager: fluidAudio),
             whisperModelManager: whisper,
             fluidAudioModelManager: fluidAudio,
-            aiService: AIService()
+            aiService: AIService(),
+            menuBarManager: menuBar,
+            launchAtLoginManager: launchAtLoginManager
         )
+    }
+
+    func testDockIconGoesThroughTheMenuBarManagerAndKeepsWindows() {
+        let target = makeTarget()
+
+        target.setMenuBarOnly(true)
+        target.setMenuBarOnly(false)
+
+        XCTAssertEqual(menuBar.changes, [true, false])
+    }
+
+    func testLaunchAtLoginGoesThroughTheLaunchAtLoginManager() async {
+        let loginItem = FakeLoginItem(status: .notRegistered)
+        let target = makeTarget(launchAtLoginManager: LaunchAtLoginManager(loginItem: loginItem))
+
+        let succeeded = await target.setLaunchAtLogin(true)
+
+        XCTAssertTrue(succeeded)
+        XCTAssertEqual(loginItem.status, .enabled)
     }
 
     func testRecordingShortcutCountsAsChosenWhenSetOrRemoved() throws {

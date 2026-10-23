@@ -46,6 +46,8 @@ final class ManagedDefaultsApplier: NSObject {
     private var observers: [NSObjectProtocol] = []
     /// The Launch at Login change in progress, if any.
     private(set) var launchAtLoginTask: Task<Void, Never>?
+    /// The Launch at Login value that failed to apply in this run. The next launch tries it again.
+    private var failedLaunchAtLoginValue: Bool?
 
     init(
         defaults: UserDefaults = AppPreferences.defaults,
@@ -140,16 +142,19 @@ final class ManagedDefaultsApplier: NSObject {
     }
 
     /// Records the value only when the login item changed, so a failed registration is tried again at the next
-    /// launch or profile change.
+    /// launch or profile change. A value that failed isn't tried again in the same run, so the toggle doesn't flip
+    /// back and forth each time the profile is read.
     private func applyLaunchAtLogin(_ managed: ManagedDefaults) {
         guard launchAtLoginTask == nil,
-            let enabled = valueToApply(managed.launchAtLogin, appliedKey: ManagedDefaults.appliedLaunchAtLoginKey)
+            let enabled = valueToApply(managed.launchAtLogin, appliedKey: ManagedDefaults.appliedLaunchAtLoginKey),
+            enabled != failedLaunchAtLoginValue
         else { return }
 
         launchAtLoginTask = Task { [target, defaults, logger] in
             let succeeded = await target.setLaunchAtLogin(enabled)
             launchAtLoginTask = nil
             guard succeeded else {
+                failedLaunchAtLoginValue = enabled
                 logger.error(
                     "Couldn't apply \(ManagedDefaults.launchAtLoginKey, privacy: .public) \(enabled, privacy: .public); trying again at the next launch"
                 )
@@ -258,34 +263,33 @@ final class LiveManagedDefaultsTarget: ManagedDefaultsTarget {
     private let aiService: AIService
     private let transcribeCppModelManager = TranscribeCppModelManager.shared
     private let voiceInkRefineService = VoiceInkRefineService.shared
-    private let menuBarManager: MenuBarManager?
+    private let menuBarManager: any MenuBarOnlySetting
+    private let launchAtLoginManager: LaunchAtLoginManager?
 
     init(
         transcriptionModelManager: TranscriptionModelManager,
         whisperModelManager: WhisperModelManager,
         fluidAudioModelManager: FluidAudioModelManager,
         aiService: AIService,
-        menuBarManager: MenuBarManager? = nil
+        menuBarManager: any MenuBarOnlySetting,
+        launchAtLoginManager: LaunchAtLoginManager? = nil
     ) {
         self.transcriptionModelManager = transcriptionModelManager
         self.whisperModelManager = whisperModelManager
         self.fluidAudioModelManager = fluidAudioModelManager
         self.aiService = aiService
         self.menuBarManager = menuBarManager
+        self.launchAtLoginManager = launchAtLoginManager
     }
 
-    /// Goes through `MenuBarManager`, which saves the setting and updates the activation policy and main window.
-    /// Without one, saves the setting for `MenuBarManager` to read when it starts.
+    /// Goes through `MenuBarManager`, which saves the setting and updates the activation policy. Unlike the
+    /// Settings toggle, an open window stays up, such as the one where the person just finished onboarding.
     func setMenuBarOnly(_ menuBarOnly: Bool) {
-        if let menuBarManager {
-            menuBarManager.isMenuBarOnly = menuBarOnly
-        } else {
-            UserDefaults.standard.set(menuBarOnly, forKey: "IsMenuBarOnly")
-        }
+        menuBarManager.setMenuBarOnlyKeepingWindows(menuBarOnly)
     }
 
     func setLaunchAtLogin(_ enabled: Bool) async -> Bool {
-        await LaunchAtLoginManager.shared.setEnabledAndWait(enabled)
+        await (launchAtLoginManager ?? .shared).setEnabledAndWait(enabled)
     }
 
     var transcriptionModels: [any TranscriptionModel] { transcriptionModelManager.allAvailableModels }
