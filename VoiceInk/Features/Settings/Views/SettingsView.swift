@@ -16,6 +16,8 @@ struct SettingsView: View {
     @ObservedObject private var playbackController = PlaybackController.shared
     @AppStorage(OnboardingSettings.completedV2Key) private var hasCompletedOnboardingV2 = true
     @AppStorage("enableAnnouncements") private var enableAnnouncements = true
+    @AppStorage(GitHubStarPromptPolicy.showPromptKey) private var showGitHubStarPrompt = true
+    @AppStorage(GitHubStarPromptPolicy.hidePromptKey) private var isGitHubStarPromptHiddenByPolicy = false
     @AppStorage("restoreClipboardAfterPaste") private var restoreClipboardAfterPaste = true
     @AppStorage("clipboardRestoreDelay") private var clipboardRestoreDelay = 2.0
     @AppStorage(PasteMethod.userDefaultsKey) private var pasteMethodRawValue = PasteMethod.standard.rawValue
@@ -258,6 +260,26 @@ struct SettingsView: View {
                             AnnouncementsService.shared.stop()
                         }
                     }
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Toggle(
+                        "Show GitHub Star Request",
+                        isOn: Binding(
+                            get: { showGitHubStarPrompt && !isGitHubStarPromptHiddenByPolicy },
+                            set: { showGitHubStarPrompt = $0 }
+                        )
+                    )
+                    .disabled(isGitHubStarPromptHiddenByPolicy)
+
+                    if isGitHubStarPromptHiddenByPolicy {
+                        ManagedByOrganizationCaption(
+                            title: GitHubStarPromptPolicy.isManaged ? "Managed by your organization" : "Set in preferences",
+                            message: GitHubStarPromptPolicy.isManaged
+                                ? "Your organization turned off the request to star VoiceInk on GitHub."
+                                : "The HideGitHubStarPrompt preference turns off the request to star VoiceInk on GitHub."
+                        )
+                    }
+                }
 
                 HStack {
                     if updaterViewModel.hasUpdateFeed {

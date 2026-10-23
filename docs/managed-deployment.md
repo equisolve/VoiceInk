@@ -119,6 +119,7 @@ All of these keys are in the `com.equisolve.VoiceInk` domain.
 | `ManagedAIEndpointURL`, `ManagedAIModel`, `ManagedAISignInURL`, `ManagedAIToken`, `ManagedAIProviderName` | String | Set up an organization AI endpoint, as described in [Provide an organization AI endpoint](#provide-an-organization-ai-endpoint). |
 | `IsAutoLearnDictionaryEnabled` | Boolean | `false` turns off Auto-Learn Dictionary. |
 | `enableAnnouncements` | Boolean | `false` turns off in-app announcements. |
+| `HideGitHubStarPrompt` | Boolean | `true` hides the request to star VoiceInk on GitHub, both the Dashboard card and the Dashboard footer button. Settings shows **Show GitHub Star Request** turned off and labeled **Managed by your organization**. When the key is `false` or absent, each person's **Show GitHub Star Request** setting decides. |
 | `VoiceInkChecksForUpdatesOnLaunch` | Boolean | `false` turns off automatic update checks. Equisolve's release never checks, so the key has no effect there. |
 | `IsTranscriptionCleanupEnabled` | Boolean | `true` deletes transcripts and recordings after the retention period. |
 | `TranscriptionRetentionMinutes` | Integer | How long to keep transcripts and recordings, in minutes, when cleanup is on. For example, `10080` is seven days. |
@@ -168,6 +169,8 @@ This profile sets the keys in the previous table, except `ManagedAIToken`, and t
                                 <false/>
                                 <key>enableAnnouncements</key>
                                 <false/>
+                                <key>HideGitHubStarPrompt</key>
+                                <true/>
                                 <key>VoiceInkChecksForUpdatesOnLaunch</key>
                                 <false/>
                                 <key>IsTranscriptionCleanupEnabled</key>

@@ -29,16 +29,20 @@ final class GitHubStarPromptCoordinator: ObservableObject {
     @Published private(set) var completionState: CompletionState = .none
     // Brief, non-blocking feedback when NSWorkspace fails to open the repo URL - card stays up so the user can retry.
     @Published private(set) var openFailed = false
+    // False when the person or a configuration profile turns the request off; hides the card and the footer button.
+    @Published private(set) var isAllowed: Bool
 
     // Shown in the Dashboard footer only once Later has been clicked - never appears from a toast-only flow.
-    var showsFooterStarButton: Bool { hasDeferredAtLeastOnce && (!isResolved || completionState != .none) }
+    var showsFooterStarButton: Bool {
+        isAllowed && hasDeferredAtLeastOnce && (!isResolved || completionState != .none)
+    }
 
     private static let repoURL = URL(string: "https://github.com/Beingpax/VoiceInk")!
     private static let showDelaySeconds: TimeInterval = 3
     private static let completionDisplaySeconds: TimeInterval = 1.5
-    private static let minimumCompletedSessionsToPrompt = 30
+    static let minimumCompletedSessionsToPrompt = 30
 
-    private enum Keys {
+    enum Keys {
         static let hasStarred = "GitHubStarPromptHasStarred"
         static let hasDeferredOnce = "GitHubStarPromptHasDeferredOnce"
     }
@@ -46,11 +50,32 @@ final class GitHubStarPromptCoordinator: ObservableObject {
     private var hasScheduled = false
     private var scheduleTask: Task<Void, Never>?
     private var modelContainer: ModelContainer?
+    private var preferencesObserver: NSObjectProtocol?
 
     private init() {
         let defaults = UserDefaults.standard
         isResolved = defaults.bool(forKey: Keys.hasStarred)
         hasDeferredAtLeastOnce = defaults.bool(forKey: Keys.hasDeferredOnce)
+        isAllowed = GitHubStarPromptPolicy.isPromptAllowed
+
+        preferencesObserver = NotificationCenter.default.addObserver(
+            forName: UserDefaults.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.refreshAllowed()
+            }
+        }
+    }
+
+    private func refreshAllowed() {
+        let allowed = GitHubStarPromptPolicy.isPromptAllowed
+        guard allowed != isAllowed else { return }
+        isAllowed = allowed
+        if !allowed {
+            isVisible = false
+        }
     }
 
     // Call once when the main window appears; only the first call per app run schedules the timer.
@@ -146,9 +171,11 @@ final class GitHubStarPromptCoordinator: ObservableObject {
         isVisible = false
     }
 
+    private static var shouldShow: Bool { shouldShow(in: AppPreferences.defaults) }
+
     // Once Later has been clicked, the toast retires for good; the persistent footer button takes over.
-    private static var shouldShow: Bool {
-        let defaults = UserDefaults.standard
+    static func shouldShow(in defaults: UserDefaults) -> Bool {
+        if !GitHubStarPromptPolicy.isPromptAllowed(in: defaults) { return false }
         if defaults.bool(forKey: Keys.hasStarred) { return false }
         if defaults.bool(forKey: Keys.hasDeferredOnce) { return false }
         return true
