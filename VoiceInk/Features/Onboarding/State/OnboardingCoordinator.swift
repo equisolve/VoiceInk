@@ -465,6 +465,7 @@ final class OnboardingCoordinator: ObservableObject {
     /// person to sign in first (see `ManagedAIEndpoint.requiresSignIn`). Nil when the step can run as it is.
     var signInURLRequiredForCurrentExperience: URL? {
         guard experienceStep.requiresVerifiedAPIProvider,
+            practicesWithOrganizationEndpoint,
             let endpoint = ManagedAIEndpoint.current(in: defaults),
             ManagedAIEndpoint.requiresSignIn(
                 endpoint: endpoint,

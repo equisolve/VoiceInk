@@ -3,6 +3,12 @@ import SwiftUI
 @MainActor
 final class OnboardingFlowController {
     private unowned let coordinator: OnboardingCoordinator
+    /// Where the intro saves the step's starting shortcut, and why a shortcut can't be used. Tests replace both so
+    /// they don't touch the app's settings.
+    var saveShortcut: (Shortcut?, ShortcutAction) -> Void = { ShortcutStore.setShortcut($0, for: $1) }
+    var shortcutValidationError: (Shortcut, ShortcutAction) -> ShortcutValidationError? = {
+        ShortcutValidator.validationError(for: $0, action: $1)
+    }
 
     init(coordinator: OnboardingCoordinator) {
         self.coordinator = coordinator
@@ -552,11 +558,11 @@ final class OnboardingFlowController {
         // Start from the organization's recommended shortcut when it has one and it's free to use.
         let action = coordinator.experienceShortcutAction
         if let recommended = coordinator.experienceIntroShortcut,
-            ShortcutValidator.validationError(for: recommended, action: action) == nil
+            shortcutValidationError(recommended, action) == nil
         {
-            ShortcutStore.setShortcut(recommended, for: action)
+            saveShortcut(recommended, action)
         } else {
-            ShortcutStore.setShortcut(nil, for: action)
+            saveShortcut(nil, action)
         }
     }
 

@@ -68,7 +68,7 @@ In onboarding, the practice steps that use AI enhancement, **Try Enhancement** a
 
 - The practice area is grayed out, and a card above it shows a **Sign in with Equisolve** button and a **Skip** button. **Next** stays off.
 - After a successful sign-in, the practice area turns on and the provider card shows **Signed in as** and the account name.
-- If the sign-in fails or the person cancels it, the card shows the error, and both buttons stay available.
+- If the sign-in fails, the card shows the error. If the person cancels it, the card shows no error. Either way, the practice area stays off and both buttons stay available.
 - **Skip** moves on to the next step without signing in. It doesn't turn enhancement off or change the provider. The person can sign in later from the provider card in **AI Models**.
 
 When the profile sets `ManagedAIToken`, or the person has already signed in, the practice steps work as usual.

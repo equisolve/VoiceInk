@@ -1,3 +1,4 @@
+import SwiftData
 import XCTest
 
 @testable import VoiceInk
@@ -161,6 +162,66 @@ final class OnboardingSignInTests: XCTestCase {
 
         XCTAssertFalse(coordinator.isCurrentExperienceWaitingForSignIn)
         XCTAssertTrue(coordinator.canAdvanceCurrentExperience(isTranscriptionSetupReady: true))
+    }
+
+    func testVerifiedNonManagedProviderGetsNoWait() throws {
+        // Sign-in is set up, but the profile doesn't pick the organization endpoint, and the person verified a cloud
+        // key during onboarding, so practice runs on that provider.
+        setOrganizationEndpoint(provider: nil)
+        let coordinator = OnboardingCoordinator(defaults: defaults)
+        coordinator.isManagedAISignedIn = { [unowned self] in isSignedIn }
+        coordinator.isSelectedAPIProviderVerified = true
+        coordinator.storedStage = OnboardingStage.experience.rawValue
+        coordinator.experienceStepIndex = try XCTUnwrap(
+            coordinator.activeExperienceSteps.firstIndex { $0.kind == .enhance })
+
+        XCTAssertFalse(coordinator.practicesWithOrganizationEndpoint)
+        XCTAssertNotEqual(coordinator.practiceEnhancementProvider.provider, .managed)
+        XCTAssertNil(coordinator.signInURLRequiredForCurrentExperience)
+    }
+
+    func testDisallowedEndpointGetsNoWait() throws {
+        // With cloud services off, the organization endpoint must use https or a loopback host.
+        setOrganizationEndpoint()
+        defaults.set("http://ai.example.com/v1", forKey: ManagedAIEndpoint.endpointURLKey)
+        defaults.set(true, forKey: CloudPolicy.disableCloudServicesKey)
+        let coordinator = try makeCoordinator(on: .dictation)
+        coordinator.isSelectedAPIProviderVerified = true
+        coordinator.experienceStepIndex = try XCTUnwrap(
+            coordinator.activeExperienceSteps.firstIndex { $0.kind == .enhance })
+
+        XCTAssertFalse(coordinator.practicesWithOrganizationEndpoint)
+        XCTAssertNil(coordinator.signInURLRequiredForCurrentExperience)
+    }
+
+    func testOrganizationEndpointFollowsTheCloudPolicy() {
+        setOrganizationEndpoint()
+        defaults.set(true, forKey: CloudPolicy.disableCloudServicesKey)
+        XCTAssertTrue(
+            OnboardingCoordinator(defaults: defaults).practicesWithOrganizationEndpoint,
+            "An https endpoint stays allowed while cloud services are off")
+
+        defaults.set("http://ai.example.com/v1", forKey: ManagedAIEndpoint.endpointURLKey)
+        XCTAssertFalse(OnboardingCoordinator(defaults: defaults).practicesWithOrganizationEndpoint)
+
+        defaults.set(false, forKey: CloudPolicy.disableCloudServicesKey)
+        XCTAssertTrue(OnboardingCoordinator(defaults: defaults).practicesWithOrganizationEndpoint)
+    }
+
+    func testAdvanceRefusesWhileWaitingForSignIn() throws {
+        setOrganizationEndpoint()
+        let coordinator = try makeCoordinator(on: .enhance)
+        let index = coordinator.experienceStepIndex
+        let container = try ModelContainer(
+            for: Schema([VocabularyWord.self]), configurations: ModelConfiguration(isStoredInMemoryOnly: true))
+        let enhancementService = AIEnhancementService(
+            aiService: AIService(defaultModeStore: FakeDefaultModeStore()), modelContext: container.mainContext)
+
+        coordinator.flow.advanceExperienceStep(isTranscriptionSetupReady: true, enhancementService: enhancementService)
+
+        XCTAssertEqual(coordinator.experienceStepIndex, index)
+        XCTAssertEqual(coordinator.stage, .experience)
+        XCTAssertEqual(coordinator.experienceStep.kind, .enhance)
     }
 
     func testWithoutManagedKeysTheStepIsUnchanged() throws {

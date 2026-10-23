@@ -724,6 +724,33 @@ final class LiveManagedDefaultsTargetTests: XCTestCase {
         )
     }
 
+    func testRecordingShortcutCountsAsChosenWhenSetOrRemoved() throws {
+        // ShortcutStore keeps the shortcut in the app's own settings. Write the stored values directly, so no
+        // shortcut change is announced to the running app, and put the previous values back.
+        let standard = UserDefaults.standard
+        let key = ShortcutAction.primaryRecording.userDefaultsKey
+        let clearedKey = key + "_cleared"
+        let savedShortcut = standard.object(forKey: key)
+        let savedCleared = standard.object(forKey: clearedKey)
+        defer {
+            standard.set(savedShortcut, forKey: key)
+            standard.set(savedCleared, forKey: clearedKey)
+        }
+        let target = makeTarget()
+
+        standard.removeObject(forKey: key)
+        standard.removeObject(forKey: clearedKey)
+        XCTAssertFalse(target.hasChosenRecordingShortcut)
+
+        let shortcut = try XCTUnwrap(ShortcutMigration.presetShortcut(named: "rightCommand"))
+        standard.set(try JSONEncoder().encode(shortcut), forKey: key)
+        XCTAssertTrue(target.hasChosenRecordingShortcut)
+
+        standard.removeObject(forKey: key)
+        standard.set(true, forKey: clearedKey)
+        XCTAssertTrue(target.hasChosenRecordingShortcut, "Removing the shortcut on purpose is a choice too")
+    }
+
     func testWritesDefaultsIntoTheDefaultMode() throws {
         let other = ModeConfig(name: "Other", isAIEnhancementEnabled: false, selectedTranscriptionModelName: "x")
         let dictation = ModeConfig(

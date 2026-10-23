@@ -52,6 +52,41 @@ final class OnboardingShortcutRecommendationTests: XCTestCase {
         XCTAssertFalse(coordinator.isUsingRecommendedShortcut)
     }
 
+    /// Opens the shortcut step's intro and returns what it saved as the starting shortcut.
+    private func openShortcutIntro(
+        _ coordinator: OnboardingCoordinator, validationError: ShortcutValidationError? = nil
+    ) -> [Shortcut?] {
+        var saved: [Shortcut?] = []
+        coordinator.flow.saveShortcut = { shortcut, action in
+            XCTAssertEqual(action, .primaryRecording)
+            saved.append(shortcut)
+        }
+        coordinator.flow.shortcutValidationError = { _, _ in validationError }
+        coordinator.isExperienceInIntroPhase = true
+        coordinator.flow.clearExperienceShortcutForIntroIfNeeded()
+        return saved
+    }
+
+    func testIntroStartsWithTheRecommendedShortcut() throws {
+        defaults.set("rightOption", forKey: ManagedDefaults.shortcutKey)
+        let coordinator = try makeCoordinator()
+
+        XCTAssertEqual(openShortcutIntro(coordinator), [ShortcutMigration.presetShortcut(named: "rightOption")])
+        XCTAssertEqual(openShortcutIntro(coordinator), [], "The intro sets the starting shortcut once")
+    }
+
+    func testIntroClearsTheShortcutWhenTheRecommendationIsTaken() throws {
+        defaults.set("rightOption", forKey: ManagedDefaults.shortcutKey)
+        let coordinator = try makeCoordinator()
+
+        XCTAssertEqual(openShortcutIntro(coordinator, validationError: .alreadyUsedBy("Paste Last Transcription")), [nil])
+    }
+
+    func testIntroClearsTheShortcutWithoutARecommendation() throws {
+        let coordinator = try makeCoordinator()
+        XCTAssertEqual(openShortcutIntro(coordinator), [nil])
+    }
+
     func testUsageLineShowsOnTheShortcutStepInHybridMode() throws {
         let coordinator = try makeCoordinator()
         XCTAssertTrue(coordinator.showsShortcutUsageHint)
